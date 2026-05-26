@@ -1,9 +1,9 @@
-pymupdf
-pydantic
-requests
-litellm
-streamlit
-supabase
-numpy
+marker-pdf==1.6.2
+groq==1.2.0
+litellm==1.86.1
+pydantic==2.13.4
+requests==2.34.2
+streamlit==1.57.0
+supabase==2.30.0
 python-dotenv
-tiktoken
+rich==14.0.0
