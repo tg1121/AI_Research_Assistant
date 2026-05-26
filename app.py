@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import json
 import base64
-from ingestion.marker_parser import parse_with_marker
+from ingestion.parser import parse_document
 from pipeline.tagger import run_tagging
 from pipeline.chain_builder import run_chain_builder
 from pipeline.section_qa import run_section_qa
@@ -51,6 +51,7 @@ for key, default in [
     ("split_mid",            3),
     ("split_right",          7),
     ("sidebar_open",         True),
+    ("datalab_api_key",      ""),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -92,7 +93,8 @@ def _run_pipeline(uploaded_file, expertise, sci, lang, llm_model, llm_api_key,
         f.write(uploaded_file.getbuffer())
     steps = 4 if run_qa else 3
     _prog(10,  f"1/{steps} — Parsing…")
-    doc = parse_with_marker(save_path, paper_id)
+    doc = parse_document(save_path, paper_id,
+                         datalab_api_key=st.session_state.get("datalab_api_key") or None)
     _prog(35,  f"2/{steps} — Tagging…")
     doc = run_tagging(doc, model=llm_model, api_key=llm_api_key)
     _prog(60,  f"3/{steps} — Math chain…")
@@ -112,7 +114,8 @@ def _parse_only(uploaded_file):
     os.makedirs("uploads", exist_ok=True)
     with open(save_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
-    return parse_with_marker(save_path, paper_id)
+    return parse_document(save_path, paper_id,
+                          datalab_api_key=st.session_state.get("datalab_api_key") or None)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -166,6 +169,25 @@ with st.sidebar:
     st.session_state.llm_model    = selected_model
     if not st.session_state.llm_api_key:
         st.session_state.llm_api_key = os.environ.get(info["env_var"], "") or ""
+
+    st.markdown("---")
+
+    # PDF Parser
+    _admin_mode = os.environ.get("ADMIN_MODE", "").lower() == "true"
+    if not _admin_mode:
+        st.markdown("**PDF Parser**")
+        _datalab_key = st.text_input(
+            "Datalab API Key (optional)",
+            value=st.session_state.datalab_api_key,
+            type="password",
+            placeholder="For high-quality math/table parsing",
+            help="Leave blank to use PyMuPDF (default). Get a free key at datalab.to"
+        )
+        st.session_state.datalab_api_key = _datalab_key
+        if _datalab_key:
+            st.caption("✅ Using Marker API")
+        else:
+            st.caption("Using PyMuPDF (default)")
 
     st.markdown("---")
     st.markdown("**Reader Profile**")

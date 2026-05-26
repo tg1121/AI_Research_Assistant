@@ -1,8 +1,8 @@
-﻿marker-pdf
+pymupdf
+requests
 groq==1.2.0
 litellm
 pydantic==2.13.4
-requests==2.34.2
 streamlit==1.57.0
 supabase==2.30.0
 python-dotenv
