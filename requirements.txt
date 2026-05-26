@@ -5,3 +5,5 @@ litellm
 streamlit
 supabase
 numpy
+python-dotenv
+tiktoken
