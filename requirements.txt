@@ -1,4 +1,4 @@
-﻿marker-pdf==1.6.2
+﻿marker-pdf
 groq==1.2.0
 litellm
 pydantic==2.13.4
