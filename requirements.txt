@@ -1,0 +1,7 @@
+pymupdf
+pydantic
+requests
+litellm
+streamlit
+supabase
+numpy
