@@ -6,4 +6,8 @@ requests==2.34.2
 streamlit==1.57.0
 supabase==2.30.0
 python-dotenv
+<<<<<<< HEAD
 rich==14.0.0
+=======
+rich>=10.11.0,<15.0.0
+>>>>>>> c5773aef29dc08b5a5c6558c68e167b7a03951a8
