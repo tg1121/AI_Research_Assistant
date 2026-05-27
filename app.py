@@ -50,7 +50,7 @@ for key, default in [
     ("chat_turn_counter",    [0]),
     ("chat_ready",           False),
     ("split_mid",            3),
-    ("split_right",          7),
+    ("split_right",          3),
     ("sidebar_open",         True),
     ("datalab_api_key",      ""),
 ]:
@@ -275,7 +275,7 @@ with st.sidebar:
         st.caption("Panel widths")
         st.session_state.split_mid   = st.slider("Papers", 1, 5,
                                                    st.session_state.split_mid,   key="w_mid")
-        st.session_state.split_right = st.slider("Content", 1, 9,
+        st.session_state.split_right = st.slider("Content", 1, 5,
                                                    st.session_state.split_right, key="w_right")
     else:
         # page 1 — still persist slider values
