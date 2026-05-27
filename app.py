@@ -50,7 +50,7 @@ for key, default in [
     ("chat_turn_counter",    [0]),
     ("chat_ready",           False),
     ("split_mid",            3),
-    ("split_right",          3),
+    ("split_right",          7),
     ("sidebar_open",         True),
     ("datalab_api_key",      ""),
 ]:
@@ -275,7 +275,7 @@ with st.sidebar:
         st.caption("Panel widths")
         st.session_state.split_mid   = st.slider("Papers", 1, 5,
                                                    st.session_state.split_mid,   key="w_mid")
-        st.session_state.split_right = st.slider("Content", 1, 5,
+        st.session_state.split_right = st.slider("Content", 1, 9,
                                                    st.session_state.split_right, key="w_right")
     else:
         # page 1 — still persist slider values
@@ -443,10 +443,13 @@ with col_papers:
               const page = await pdf.getPage(i);
               const nativeViewport = page.getViewport({{scale: 1}});
               const scale = containerWidth / nativeViewport.width;
-              const viewport = page.getViewport({{scale}});
+              const dpr = window.devicePixelRatio || 1;
+              const viewport = page.getViewport({{scale: scale * dpr}});
               const canvas = document.createElement('canvas');
               canvas.width = viewport.width;
               canvas.height = viewport.height;
+              canvas.style.width = (viewport.width / dpr) + 'px';
+              canvas.style.height = (viewport.height / dpr) + 'px';
               canvas.style.display = 'block';
               canvas.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
               wrapper.appendChild(canvas);
