@@ -1,8 +1,9 @@
 import streamlit as st
 import os
+import sys
 import json
 import base64
-from ingestion.parser import parse_document
+from ingestion.parser import parse_document, _IS_LOCAL
 from pipeline.tagger import run_tagging
 from pipeline.chain_builder import run_chain_builder
 from pipeline.section_qa import run_section_qa
@@ -49,7 +50,7 @@ for key, default in [
     ("chat_turn_counter",    [0]),
     ("chat_ready",           False),
     ("split_mid",            3),
-    ("split_right",          7),
+    ("split_right",          3),
     ("sidebar_open",         True),
     ("datalab_api_key",      ""),
 ]:
@@ -274,7 +275,7 @@ with st.sidebar:
         st.caption("Panel widths")
         st.session_state.split_mid   = st.slider("Papers", 1, 5,
                                                    st.session_state.split_mid,   key="w_mid")
-        st.session_state.split_right = st.slider("Content", 1, 9,
+        st.session_state.split_right = st.slider("Content", 1, 5,
                                                    st.session_state.split_right, key="w_right")
     else:
         # page 1 — still persist slider values
@@ -319,7 +320,9 @@ if st.session_state.mode is None:
 mode          = st.session_state.mode
 needs_summary = mode in ("summary", "both")
 needs_chat    = mode in ("chat", "both")
-mode_label    = {"summary": "📄 Summary", "chat": "💬 Chat", "both": "🔬 Summary + Chat"}[mode]
+if mode is None:
+    st.stop()
+mode_label    = {"summary": "📄 Summary", "chat": "💬 Chat", "both": "🔬 Summary + Chat"}.get(mode, "")
 
 # top bar: settings toggle | mode label
 _tb_tog, _tb_title = st.columns([1, 8])
@@ -411,15 +414,49 @@ with col_papers:
     ap = active_paper()
     if ap and ap.get("pdf_path") and os.path.exists(ap["pdf_path"]):
         st.markdown("---")
-        pdf_height = st.slider("Viewer height", 300, 1400, 700, 50, key="pdf_h")
         with open(ap["pdf_path"], "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        st.markdown(
-            f'<iframe src="data:application/pdf;base64,{b64}" '
-            f'width="100%" height="{pdf_height}px" '
-            f'style="border:1px solid #444;border-radius:4px;"></iframe>',
-            unsafe_allow_html=True,
-        )
+            pdf_bytes = f.read()
+        b64 = base64.b64encode(pdf_bytes).decode()
+        pdfjs_html = f"""
+        <div id="pdf-container" style="width:100%;background:#525659;border-radius:4px;padding:12px;box-sizing:border-box;overflow-y:auto;">
+          <div id="pages-wrapper" style="display:flex;flex-direction:column;gap:12px;align-items:center;"></div>
+        </div>
+        <script>
+          // Set container height to A4 ratio after DOM loads
+          const cont = document.getElementById("pdf-container");
+          const w = cont.clientWidth - 24;
+          cont.style.height = Math.round(w * 1.414) + "px";
+        </script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+        <script>
+          pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+          const base64 = "{b64}";
+          const binary = atob(base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+          pdfjsLib.getDocument({{data: bytes}}).promise.then(async pdf => {{
+            const wrapper = document.getElementById('pages-wrapper');
+            const container = document.getElementById('pdf-container');
+            const containerWidth = container.clientWidth - 24;
+            for (let i = 1; i <= pdf.numPages; i++) {{
+              const page = await pdf.getPage(i);
+              const nativeViewport = page.getViewport({{scale: 1}});
+              const scale = containerWidth / nativeViewport.width;
+              const viewport = page.getViewport({{scale}});
+              const canvas = document.createElement('canvas');
+              canvas.width = viewport.width;
+              canvas.height = viewport.height;
+              canvas.style.display = 'block';
+              canvas.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+              wrapper.appendChild(canvas);
+              await page.render({{canvasContext: canvas.getContext('2d'), viewport}}).promise;
+            }}
+          }});
+        </script>
+        """
+        import streamlit.components.v1 as components
+        components.html(pdfjs_html, height=870, scrolling=False)
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -11,11 +11,17 @@ Cache strategy:
 
 import os
 import re
+import sys
 import time
 import requests
 import fitz  # PyMuPDF
 from .document import Document, Section
 from supabase import create_client
+
+# On Windows, pdftext's multiprocessing conflicts with Streamlit's process model.
+# Force single-worker mode automatically to prevent BrokenProcessPool errors.
+if sys.platform == "win32" and "PDFTEXT_CPU_WORKERS" not in os.environ:
+    os.environ["PDFTEXT_CPU_WORKERS"] = "1"
 
 _IS_LOCAL = os.environ.get("ADMIN_MODE", "").lower() == "true"
 LOCAL_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "marker_output")
