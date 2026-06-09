@@ -1,10 +1,11 @@
-# ── kept from V7 ──────────────────────────────────────────────────────
-streamlit>=1.35
+fastapi>=0.110
+uvicorn>=0.29
+python-multipart>=0.0.9
+pymupdf>=1.24
 litellm>=1.40
 pydantic>=2.0
 supabase>=2.0
 requests>=2.28
 python-dotenv>=1.0
-
-# ── V8 new ────────────────────────────────────────────────────────────
-networkx>=3.0          # DAG, topological sort, ancestor traversal
+networkx>=3.0
+groq>=0.9
