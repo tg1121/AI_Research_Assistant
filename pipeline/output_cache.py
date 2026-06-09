@@ -1,14 +1,11 @@
 """
 Output cache — saves and loads pipeline results keyed by paper_id + reader profile + model.
 
-Profile is bucketed to 1 decimal place so minor slider jitter (0.501 vs 0.499)
-doesn't produce cache misses. The cache lives in outputs/ as:
+Cache strategy:
+  - Local (ADMIN_MODE=true) → outputs/ directory as JSON files
+  - Deployed               → Supabase 'output_cache' table
 
-    outputs/<paper_id>__e<expertise>_s<sci>_l<lang>__<model_slug>.json
-
-e.g. outputs/Thesis-2010110690__e0.0_s0.0_l0.0__groq-llama-3.3-70b-versatile.json
-
-Model slug strips the provider prefix and replaces unsafe filename chars with '-'.
+Profile is bucketed to 1 decimal place so minor slider jitter doesn't produce cache misses.
 """
 
 import json
@@ -17,23 +14,30 @@ import re
 from ingestion.document import Document
 
 OUTPUTS_DIR = "outputs"
+_IS_LOCAL   = os.environ.get("ADMIN_MODE", "").lower() == "true"
 
+# ── Supabase client (deployed only) ──────────────────────────────────
+_sb_client = None
+
+def _db():
+    global _sb_client
+    if _sb_client is None:
+        from supabase import create_client
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL and SUPABASE_KEY env vars must be set.")
+        _sb_client = create_client(url, key)
+    return _sb_client
+
+# ── Key helpers ───────────────────────────────────────────────────────
 
 def _model_slug(model: str) -> str:
-    """
-    Turn a full litellm model string into a safe filename component.
-    'openrouter/google/gemma-4-26b:free' -> 'google-gemma-4-26b-free'
-    'groq/llama-3.3-70b-versatile'       -> 'llama-3.3-70b-versatile'
-    """
-    # drop the provider prefix (everything up to and including the first '/')
     parts = model.split("/", 1)
-    slug = parts[-1]  # keep everything after the first slash (or the whole string if no slash)
-    # replace any character that's not alphanumeric, dash, or dot with a dash
-    slug = re.sub(r"[^a-zA-Z0-9.\-]", "-", slug)
-    # collapse multiple dashes
-    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    slug  = parts[-1]
+    slug  = re.sub(r"[^a-zA-Z0-9.\-]", "-", slug)
+    slug  = re.sub(r"-{2,}", "-", slug).strip("-")
     return slug or "unknown-model"
-
 
 def _profile_key(reader_expertise: float,
                  scientific_knowledge: float,
@@ -43,71 +47,125 @@ def _profile_key(reader_expertise: float,
     l = round(language_complexity, 1)
     return f"e{e}_s{s}_l{l}"
 
+def _cache_key(paper_id: str, profile_key: str, model: str) -> str:
+    return f"{paper_id}__{profile_key}__{_model_slug(model)}" if model else f"{paper_id}__{profile_key}"
 
-def cache_path(paper_id: str,
-               reader_expertise: float,
-               scientific_knowledge: float,
-               language_complexity: float,
-               model: str = "") -> str:
+def cache_path(paper_id, reader_expertise, scientific_knowledge, language_complexity, model=""):
     key = _profile_key(reader_expertise, scientific_knowledge, language_complexity)
     if model:
         return os.path.join(OUTPUTS_DIR, f"{paper_id}__{key}__{_model_slug(model)}.json")
-    # legacy fallback (no model in filename)
     return os.path.join(OUTPUTS_DIR, f"{paper_id}__{key}.json")
 
+# ── Load ──────────────────────────────────────────────────────────────
 
-def load_cached(paper_id: str,
-                reader_expertise: float,
-                scientific_knowledge: float,
-                language_complexity: float,
-                model: str = ""):
-    """Return a Document if a cached result exists for this paper + profile + model, else None."""
-    path = cache_path(paper_id, reader_expertise, scientific_knowledge, language_complexity, model)
-    if not os.path.exists(path):
-        return None
-    print(f"  [cache hit] Loading {path}")
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return Document.model_validate(data)
+def load_cached(paper_id, reader_expertise, scientific_knowledge, language_complexity, model=""):
+    profile = _profile_key(reader_expertise, scientific_knowledge, language_complexity)
+    key     = _cache_key(paper_id, profile, model)
 
+    if _IS_LOCAL:
+        path = cache_path(paper_id, reader_expertise, scientific_knowledge, language_complexity, model)
+        if not os.path.exists(path):
+            return None
+        print(f"  [local cache hit] {path}")
+        with open(path, encoding="utf-8") as f:
+            return Document.model_validate(json.load(f))
 
-def save_cache(doc: Document,
-               reader_expertise: float,
-               scientific_knowledge: float,
-               language_complexity: float,
-               model: str = "") -> str:
-    """Save doc to cache. Returns the path written."""
-    os.makedirs(OUTPUTS_DIR, exist_ok=True)
-    path = cache_path(doc.paper_id, reader_expertise, scientific_knowledge, language_complexity, model)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(doc.model_dump_json(indent=2))
-    print(f"  [cache saved] {path}")
-    return path
+    # Supabase
+    try:
+        result = (
+            _db().table("output_cache")
+            .select("doc_json")
+            .eq("cache_key", key)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            print(f"  [supabase cache hit] {key}")
+            return Document.model_validate(json.loads(result.data[0]["doc_json"]))
+    except Exception as e:
+        print(f"  [cache read failed] {e}")
+    return None
 
+# ── Save ──────────────────────────────────────────────────────────────
+
+def save_cache(doc, reader_expertise, scientific_knowledge, language_complexity, model=""):
+    profile = _profile_key(reader_expertise, scientific_knowledge, language_complexity)
+    key     = _cache_key(doc.paper_id, profile, model)
+
+    if _IS_LOCAL:
+        os.makedirs(OUTPUTS_DIR, exist_ok=True)
+        path = cache_path(doc.paper_id, reader_expertise, scientific_knowledge, language_complexity, model)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(doc.model_dump_json(indent=2))
+        print(f"  [local cache saved] {path}")
+        return path
+
+    # Supabase
+    try:
+        _db().table("output_cache").upsert({
+            "cache_key": key,
+            "paper_id":  doc.paper_id,
+            "doc_json":  doc.model_dump_json(),
+        }).execute()
+        print(f"  [supabase cache saved] {key}")
+    except Exception as e:
+        print(f"  [cache save failed] {e}")
+    return key
+
+# ── List cached profiles ──────────────────────────────────────────────
 
 def list_cached_profiles(paper_id: str) -> list[dict]:
-    """Return all cached profiles for a given paper_id as a list of dicts."""
-    if not os.path.exists(OUTPUTS_DIR):
-        return []
-    profiles = []
-    prefix = f"{paper_id}__"
-    for fname in sorted(os.listdir(OUTPUTS_DIR)):
-        if fname.startswith(prefix) and fname.endswith(".json"):
-            inner = fname[len(prefix):-5]  # e.g. "e0.5_s0.3_l0.7__llama-3.3-70b"
+    if _IS_LOCAL:
+        if not os.path.exists(OUTPUTS_DIR):
+            return []
+        profiles = []
+        prefix = f"{paper_id}__"
+        for fname in sorted(os.listdir(OUTPUTS_DIR)):
+            if fname.startswith(prefix) and fname.endswith(".json"):
+                inner = fname[len(prefix):-5]
+                try:
+                    if "__" in inner:
+                        profile_part, model_slug = inner.split("__", 1)
+                    else:
+                        profile_part, model_slug = inner, ""
+                    tokens = profile_part.split("_")
+                    parsed = {}
+                    for t in tokens:
+                        parsed[t[0]] = float(t[1:])
+                    profiles.append({
+                        "file":                 fname,
+                        "reader_expertise":     parsed.get("e", 0.0),
+                        "scientific_knowledge": parsed.get("s", 0.0),
+                        "language_complexity":  parsed.get("l", 0.0),
+                        "model_slug":           model_slug,
+                    })
+                except Exception:
+                    pass
+        return profiles
+
+    # Supabase
+    try:
+        result = (
+            _db().table("output_cache")
+            .select("cache_key")
+            .eq("paper_id", paper_id)
+            .execute()
+        )
+        profiles = []
+        for row in (result.data or []):
+            key = row["cache_key"]
+            inner = key[len(paper_id) + 2:]  # strip "paper_id__"
             try:
-                # split off optional model slug
                 if "__" in inner:
                     profile_part, model_slug = inner.split("__", 1)
                 else:
                     profile_part, model_slug = inner, ""
-
                 tokens = profile_part.split("_")
                 parsed = {}
                 for t in tokens:
                     parsed[t[0]] = float(t[1:])
-
                 profiles.append({
-                    "file":                 fname,
+                    "file":                 key,
                     "reader_expertise":     parsed.get("e", 0.0),
                     "scientific_knowledge": parsed.get("s", 0.0),
                     "language_complexity":  parsed.get("l", 0.0),
@@ -115,4 +173,7 @@ def list_cached_profiles(paper_id: str) -> list[dict]:
                 })
             except Exception:
                 pass
-    return profiles
+        return profiles
+    except Exception as e:
+        print(f"  [list profiles failed] {e}")
+        return []

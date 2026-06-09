@@ -84,31 +84,58 @@ def _save_to_cache(paper_id: str, raw_md: str):
 
 # ── Parser implementations ────────────────────────────────────────────
 
-def _parse_pymupdf(pdf_path: str) -> str:
-    """Lightweight PDF parser using PyMuPDF."""
-    doc = fitz.open(pdf_path)
-    full_text = ""
-    for page in doc:
-        full_text += page.get_text()
-    doc.close()
-    return full_text
+_PAGE_SEP = "-" * 48   # Marker's default page separator when paginate_output=True
 
-def _parse_marker_local(pdf_path: str) -> str:
+
+def _parse_pymupdf(pdf_path: str) -> str:
+    """Lightweight PDF parser using PyMuPDF. Injects \\f between pages."""
+    doc = fitz.open(pdf_path)
+    pages = [page.get_text() for page in doc]
+    doc.close()
+    return "\f".join(pages)
+
+
+def _parse_marker_local(pdf_path: str, cancel_event=None) -> str:
     """Run marker models locally — only used in ADMIN_MODE."""
+    import threading as _threading
     from marker.converters.pdf import PdfConverter
     from marker.models import create_model_dict
     from marker.output import text_from_rendered
     global _local_converter
     if _local_converter is None:
         print("  Loading marker models (one-time)...")
-        _local_converter = PdfConverter(artifact_dict=create_model_dict())
-    rendered = _local_converter(pdf_path)
-    raw_md, _, _ = text_from_rendered(rendered)
-    return raw_md
+        _local_converter = PdfConverter(
+            artifact_dict=create_model_dict(),
+            config={"paginate_output": True},
+        )
+
+    result_holder = [None]
+    exc_holder = [None]
+
+    def _run():
+        try:
+            rendered = _local_converter(pdf_path)
+            raw, _, _ = text_from_rendered(rendered)
+            result_holder[0] = re.sub(r'\n' + re.escape(_PAGE_SEP) + r'\n', '\f', raw)
+        except Exception as e:
+            exc_holder[0] = e
+
+    t = _threading.Thread(target=_run, daemon=True)
+    t.start()
+    while t.is_alive():
+        if cancel_event and cancel_event.is_set():
+            raise RuntimeError("Cancelled")
+        t.join(timeout=0.5)
+
+    if exc_holder[0]:
+        raise exc_holder[0]
+    return result_holder[0]
+
 
 _local_converter = None
 
-def _parse_marker_api(pdf_path: str, api_key: str) -> str:
+
+def _parse_marker_api(pdf_path: str, api_key: str, cancel_event=None) -> str:
     """Call Datalab Marker API — used when user provides DATALAB_API_KEY."""
     MARKER_URL    = "https://www.datalab.to/api/v1/marker"
     POLL_INTERVAL = 5
@@ -119,7 +146,7 @@ def _parse_marker_api(pdf_path: str, api_key: str) -> str:
         response = requests.post(
             MARKER_URL,
             files={"file": (os.path.basename(pdf_path), f, "application/pdf")},
-            data={"output_format": "markdown"},
+            data={"output_format": "markdown", "paginate_output": "true"},
             headers=headers,
             timeout=60
         )
@@ -130,12 +157,18 @@ def _parse_marker_api(pdf_path: str, api_key: str) -> str:
 
     check_url = data["request_check_url"]
     for _ in range(MAX_POLLS):
-        time.sleep(POLL_INTERVAL)
+        # Wait POLL_INTERVAL seconds, but wake up immediately if cancelled
+        if cancel_event and cancel_event.wait(POLL_INTERVAL):
+            raise RuntimeError("Cancelled")
+        elif not cancel_event:
+            time.sleep(POLL_INTERVAL)
         poll = requests.get(check_url, headers=headers, timeout=30)
         poll.raise_for_status()
         result = poll.json()
         if result.get("status") == "complete":
-            return result["markdown"]
+            md = result["markdown"]
+            md = re.sub(r'\n' + re.escape(_PAGE_SEP) + r'\n', '\f', md)
+            return md
         if result.get("status") == "error":
             raise RuntimeError(f"Marker API error: {result}")
 
@@ -144,7 +177,8 @@ def _parse_marker_api(pdf_path: str, api_key: str) -> str:
 # ── Main entry point ──────────────────────────────────────────────────
 
 def parse_document(pdf_path: str, paper_id: str,
-                   datalab_api_key: str | None = None) -> Document:
+                   datalab_api_key: str | None = None,
+                   cancel_event=None) -> Document:
     """
     Parse a PDF, using cache if available.
     Mode selection:
@@ -160,10 +194,10 @@ def parse_document(pdf_path: str, paper_id: str,
 
         if admin_mode:
             print(f"  [Admin] Running marker locally: {pdf_path}")
-            raw_md = _parse_marker_local(pdf_path)
+            raw_md = _parse_marker_local(pdf_path, cancel_event=cancel_event)
         elif datalab_api_key:
             print(f"  [API] Calling Datalab Marker API: {paper_id}")
-            raw_md = _parse_marker_api(pdf_path, datalab_api_key)
+            raw_md = _parse_marker_api(pdf_path, datalab_api_key, cancel_event=cancel_event)
         else:
             print(f"  [PyMuPDF] Parsing: {pdf_path}")
             raw_md = _parse_pymupdf(pdf_path)
@@ -219,9 +253,17 @@ def _should_skip_section(title: str, body: str) -> bool:
             return True
     return False
 
+def _page_at(original: str, offset: int) -> int:
+    """Return 1-based page number at a character offset by counting \\f markers."""
+    return original[:offset].count('\f') + 1
+
+
 def _split_sections_md(md: str) -> list[Section]:
+    # Work on a clean copy (\f→\n) for regex; use original for page lookup.
+    # Both chars are 1 byte so character offsets are identical in both strings.
+    clean   = md.replace('\f', '\n')
     pattern = r'(^#{1,3} .+$)'
-    parts   = re.split(pattern, md, flags=re.MULTILINE)
+    parts   = re.split(pattern, clean, flags=re.MULTILINE)
 
     abstract_idx  = None
     heading_parts = [(i, p) for i, p in enumerate(parts) if re.match(r'^#{1,3} ', p)]
@@ -235,8 +277,10 @@ def _split_sections_md(md: str) -> list[Section]:
 
     sections      = []
     current_title = "preamble"
+    current_page  = 1
     current_text  = []
     section_idx   = 0
+    cursor        = 0
 
     for part in parts:
         if re.match(r'^#{1,3} ', part):
@@ -245,30 +289,38 @@ def _split_sections_md(md: str) -> list[Section]:
                 clean_t = _clean_title(current_title)
                 if body and not _should_skip_section(clean_t, body):
                     sections.append(Section(section_id=f"s{section_idx}",
-                                            title=clean_t, raw_text=body))
+                                            title=clean_t, raw_text=body,
+                                            page=current_page))
                     section_idx += 1
             current_title = part.lstrip("#").strip()
+            current_page  = _page_at(md, cursor)
             current_text  = []
         else:
             current_text.append(part)
+        cursor += len(part)
 
     if current_text:
         body    = "\n".join(current_text).strip()
         clean_t = _clean_title(current_title)
         if body and not _should_skip_section(clean_t, body):
             sections.append(Section(section_id=f"s{section_idx}",
-                                    title=clean_t, raw_text=body))
+                                    title=clean_t, raw_text=body,
+                                    page=current_page))
 
     return [s for s in sections if s.raw_text.strip()]
 
+
 def _split_sections_plain(text: str) -> list[Section]:
+    clean   = text.replace('\f', '\n')
     pattern = r'(\n\d+\.[\d\.]*\s+[A-Z][^\n]+)'
-    parts   = re.split(pattern, text)
+    parts   = re.split(pattern, clean)
 
     sections      = []
     current_title = "preamble"
+    current_page  = 1
     current_text  = []
     section_idx   = 0
+    cursor        = 0
 
     for part in parts:
         if re.match(r'\n\d+\.[\d\.]*\s+[A-Z]', part):
@@ -276,17 +328,21 @@ def _split_sections_plain(text: str) -> list[Section]:
                 body = "\n".join(current_text).strip()
                 if body:
                     sections.append(Section(section_id=f"s{section_idx}",
-                                            title=current_title, raw_text=body))
+                                            title=current_title, raw_text=body,
+                                            page=current_page))
                     section_idx += 1
             current_title = part.strip()
+            current_page  = _page_at(text, cursor)
             current_text  = []
         else:
             current_text.append(part)
+        cursor += len(part)
 
     if current_text:
         body = "\n".join(current_text).strip()
         if body:
             sections.append(Section(section_id=f"s{section_idx}",
-                                    title=current_title, raw_text=body))
+                                    title=current_title, raw_text=body,
+                                    page=current_page))
 
     return sections
