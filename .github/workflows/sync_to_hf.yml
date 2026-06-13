@@ -18,6 +18,8 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           git config --global credential.helper store
+          git config --global user.email "tg1121@users.noreply.github.com"
+          git config --global user.name "tg1121"
           echo "https://tg1121:${HF_TOKEN}@huggingface.co" >> ~/.git-credentials
           git remote add space https://huggingface.co/spaces/tg1121/AI-RA
 
