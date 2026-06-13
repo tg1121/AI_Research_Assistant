@@ -15,6 +15,14 @@ litellm._turn_on_debug()
 # ── provider catalogue ────────────────────────────────────────────────
 
 PROVIDERS = {
+    "OpenRouter (free models)": {
+        "prefix":       "openrouter",
+        "default_model":"openai/gpt-oss-120b:free",
+        "env_var":      "OPENROUTER_API_KEY",
+        "key_hint":     "sk-or-...",
+        "notes":        "One key routes to GPT, Claude, Gemini, Llama and more. Append :free for free-tier models.",
+        "models": [],   # populated dynamically from OpenRouter API
+    },
     "Ollama (local)": {
         "prefix":       "ollama",
         "default_model":"ollama/llama3.2",
@@ -60,14 +68,6 @@ PROVIDERS = {
             "mixtral-8x7b-32768",
             "gemma2-9b-it",
         ],
-    },
-    "OpenRouter (free models)": {
-        "prefix":       "openrouter",
-        "default_model":"openai/gpt-oss-120b:free",
-        "env_var":      "OPENROUTER_API_KEY",
-        "key_hint":     "sk-or-...",
-        "notes":        "One key routes to GPT, Claude, Gemini, Llama and more. Append :free for free-tier models.",
-        "models": [],   # populated dynamically from OpenRouter API
     },
     "OpenAI": {
         "prefix":       "openai",

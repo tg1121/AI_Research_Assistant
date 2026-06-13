@@ -338,7 +338,7 @@ async def list_provider_models(prefix: str, api_key: str = ""):
 @router.post("/upload", response_model=UploadResponse)
 async def upload_paper(
     file: UploadFile = File(...),
-    model: str = Form("groq/llama-3.3-70b-versatile"),
+    model: str = Form("openrouter/openai/gpt-oss-120b:free"),
     api_key: str = Form(""),
     reader_expertise: float = Form(0.0),
     scientific_knowledge: float = Form(0.0),
@@ -394,7 +394,7 @@ async def retry_paper(paper_id: str, current_user=Depends(get_current_user)):
     loop.run_in_executor(
         _executor, _run_pipeline_sync,
         paper_id, state.pdf_path,
-        params.get("model", "groq/llama-3.3-70b-versatile"),
+        params.get("model", "openrouter/openai/gpt-oss-120b:free"),
         params.get("api_key"),
         params.get("expertise", 0.0),
         params.get("sci", 0.0),
@@ -613,7 +613,7 @@ async def chat(paper_id: str, req: ChatRequest, current_user=Depends(get_current
 
     # Guard: empty model string bypasses the Pydantic default when the field
     # is present in the request body (e.g. providers not yet loaded on frontend).
-    model = req.model.strip() or "groq/llama-3.3-70b-versatile"
+    model = req.model.strip() or "openrouter/openai/gpt-oss-120b:free"
 
     # Gather all done papers — active paper first, then any additional IDs from
     # the request (the frontend sends all open tabs so the agent can search across them).
