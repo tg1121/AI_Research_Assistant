@@ -17,5 +17,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git remote add space https://tg1121:$HF_TOKEN@huggingface.co/spaces/tg1121/AI-RA
+          git config --global credential.helper store
+          echo "https://tg1121:${HF_TOKEN}@huggingface.co" >> ~/.git-credentials
+          git remote add space https://huggingface.co/spaces/tg1121/AI-RA
           git push space main --force
