@@ -2,11 +2,9 @@
 Graph builder — builds MathGraph and DocMap.
 
 Supports two domains:
-  "math"    — regex-based (Theorem/Lemma/Definition/…)
-  "english" — LLM-based (claim/concept/evidence/critic_view/primary_text)
-  "auto"    — detect domain from document content (default)
-
-model and api_key are only used for the "english" path.
+  "math"     — regex-based (Theorem/Lemma/Definition/…) with full node/edge extraction
+  "non-math" — section-only graph; all LLM work done in english_synthesizer
+  "auto"     — detect domain from document content (default)
 """
 
 from ingestion.document import Document
@@ -57,22 +55,10 @@ def build_graph(
               f"{sum(1 for e in graph.edges if e.source=='positional')} positional, "
               f"{sum(1 for e in graph.edges if e.source=='section')} belongs-to)")
 
-    else:  # english
+    else:  # non-math — section-only graph, LLM work done in english_synthesizer
         from ingestion.english_node_extractor import extract_nodes as eng_nodes
-        from ingestion.english_edge_extractor import extract_edges as eng_edges
-
-        _model = model or "groq/llama-3.3-70b-versatile"
-
-        print("    [1/3] Extracting nodes (english, LLM)...")
-        graph = eng_nodes(doc, model=_model, api_key=api_key)
-        print(f"      {len(graph.nodes)} nodes extracted")
-
-        print("    [2/3] Extracting edges (english, LLM + regex)...")
-        graph = eng_edges(graph, model=_model, api_key=api_key)
-        print(f"      {len(graph.edges)} edges "
-              f"({sum(1 for e in graph.edges if e.source=='regex')} citation, "
-              f"{sum(1 for e in graph.edges if e.source=='llm')} semantic, "
-              f"{sum(1 for e in graph.edges if e.source=='section')} belongs-to)")
+        graph = eng_nodes(doc)
+        print(f"    [non-math] {len(graph.nodes)} section nodes")
 
     print("    [3/3] Building document map...")
     doc_map = build_doc_map(graph, doc.paper_id, doc.title)

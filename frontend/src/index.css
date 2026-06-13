@@ -61,3 +61,8 @@ button:disabled { cursor: not-allowed; }
 /* KaTeX inherits text colour so it matches surrounding dark text */
 .md .katex { color: inherit; font-size: 1em; }
 .md .katex-display { overflow-x: auto; padding: 4px 0; }
+/* GFM tables */
+.md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.85em; }
+.md th, .md td { border: 1px solid #374151; padding: 6px 10px; text-align: left; }
+.md th { background: #1F2937; color: #93C5FD; font-weight: 600; }
+.md tr:nth-child(even) td { background: #1a2233; }

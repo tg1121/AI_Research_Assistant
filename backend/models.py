@@ -2,6 +2,24 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    user_id: str
+    email: str
+
+
+class SignupResponse(BaseModel):
+    access_token: Optional[str] = None
+    user_id: Optional[str] = None
+    email: str
+    confirm_email: bool = False
+
+
 class UploadResponse(BaseModel):
     paper_id: str
     status: str
@@ -16,11 +34,18 @@ class StatusResponse(BaseModel):
     detected_domain: Optional[str] = None
 
 
+class MarkerDecisionRequest(BaseModel):
+    use_marker: bool
+    datalab_key: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     question: str
     reader_params: dict = {}
     model: str = "groq/llama-3.3-70b-versatile"
     api_key: Optional[str] = None
+    paper_ids: list[str] = []  # all open papers; enables multi-paper context
+    prior_messages: list[dict] = []  # frontend-saved history; restores backend state after restart
 
 
 class ChatResponse(BaseModel):

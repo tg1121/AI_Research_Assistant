@@ -2,7 +2,7 @@ import { useRef } from 'react';
 
 const STATUS_ICON = { processing: '⏳', error: '❌', done: '' };
 
-export default function TabBar({ tabs, activeIdx, onSelect, onClose, onUpload }) {
+export default function TabBar({ tabs, activeIdx, onSelect, onClose, onUpload, onLibrary, libraryCount = 0 }) {
   const fileRef = useRef(null);
 
   return (
@@ -85,6 +85,19 @@ export default function TabBar({ tabs, activeIdx, onSelect, onClose, onUpload })
       >
         +
       </button>
+
+      {onLibrary && (
+        <button
+          onClick={onLibrary}
+          title="My Papers"
+          style={{ marginLeft: 'auto', padding: '4px 10px', background: 'none', border: 'none', color: '#6B7280', fontSize: 16, cursor: 'pointer', flexShrink: 0, alignSelf: 'center', display: 'flex', alignItems: 'center', gap: 4, borderRadius: 6 }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#374151'; e.currentTarget.style.color = '#D1D5DB'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = '#6B7280'; }}
+        >
+          📚
+          {libraryCount > 0 && <span style={{ fontSize: 10, color: '#9CA3AF' }}>{libraryCount}</span>}
+        </button>
+      )}
 
       <input
         ref={fileRef}

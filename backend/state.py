@@ -21,6 +21,11 @@ class PaperState:
     detected_domain: Optional[str] = None
     cancelled: bool = False
     cancel_event: threading.Event = field(default_factory=threading.Event)
+    # set when pipeline pauses waiting for user marker decision
+    marker_decision_event: threading.Event = field(default_factory=threading.Event)
+    marker_decision: Optional[dict] = None
+    # stored so the retry endpoint can re-run with the same settings
+    pipeline_params: Optional[dict] = None
 
 
 class PaperStore:
@@ -50,6 +55,24 @@ class PaperStore:
             if state:
                 state.cancelled = True
                 state.cancel_event.set()
+                state.marker_decision_event.set()  # unblock pipeline if waiting
+
+    def reset_for_retry(self, paper_id: str):
+        with self._lock:
+            state = self._store.get(paper_id)
+            if state:
+                state.status = "processing"
+                state.progress_pct = 0
+                state.progress_text = "Retrying…"
+                state.doc = None
+                state.graph = None
+                state.doc_map = None
+                state.error = None
+                state.detected_domain = None
+                state.cancelled = False
+                state.cancel_event = threading.Event()
+                state.marker_decision_event = threading.Event()
+                state.marker_decision = None
 
     def exists(self, paper_id: str) -> bool:
         return paper_id in self._store

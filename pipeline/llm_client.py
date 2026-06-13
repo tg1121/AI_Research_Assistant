@@ -9,11 +9,44 @@ import litellm
 from litellm.exceptions import AuthenticationError, RateLimitError
 
 litellm.telemetry = False
+litellm._turn_on_debug()
 
 
 # ── provider catalogue ────────────────────────────────────────────────
 
 PROVIDERS = {
+    "Ollama (local)": {
+        "prefix":       "ollama",
+        "default_model":"ollama/llama3.2",
+        "env_var":      "",
+        "key_hint":     "(no key needed)",
+        "notes":        "Runs locally via Ollama. Start with: ollama serve",
+        "models": [
+            "ollama/llama3.2",
+            "ollama/llama3.1:8b",
+            "ollama/llama3.1:70b",
+            "ollama/qwen2.5:7b",
+            "ollama/qwen2.5:14b",
+            "ollama/mistral",
+            "ollama/deepseek-r1:8b",
+            "ollama/phi4",
+        ],
+    },
+    "Google Gemini": {
+        "prefix":       "gemini",
+        "default_model":"gemini/gemini-2.0-flash",
+        "env_var":      "GEMINI_API_KEY",
+        "key_hint":     "AIza...",
+        "notes":        "Free tier: 1,500 req/day. Get key: aistudio.google.com",
+        "models": [
+            "gemini/gemini-2.0-flash",
+            "gemini/gemini-2.5-flash",
+            "gemini/gemini-2.0-flash-lite",
+            "gemini/gemini-1.5-flash",
+            "gemini/gemini-1.5-pro",
+            "gemini/gemini-2.5-pro",
+        ],
+    },
     "Groq (free tier)": {
         "prefix":       "groq",
         "default_model":"llama-3.3-70b-versatile",
@@ -30,7 +63,7 @@ PROVIDERS = {
     },
     "OpenRouter (free models)": {
         "prefix":       "openrouter",
-        "default_model":"meta-llama/llama-3.3-70b-instruct:free",
+        "default_model":"openai/gpt-oss-120b:free",
         "env_var":      "OPENROUTER_API_KEY",
         "key_hint":     "sk-or-...",
         "notes":        "One key routes to GPT, Claude, Gemini, Llama and more. Append :free for free-tier models.",
@@ -61,19 +94,6 @@ PROVIDERS = {
             "claude-opus-4-20250514",
         ],
     },
-    "Google Gemini": {
-        "prefix":       "gemini",
-        "default_model":"gemini/gemini-1.5-flash",
-        "env_var":      "GEMINI_API_KEY",
-        "key_hint":     "AIza...",
-        "notes":        "Free tier available. Get key: aistudio.google.com",
-        "models": [
-            "gemini/gemini-1.5-flash",
-            "gemini/gemini-1.5-pro",
-            "gemini/gemini-2.0-flash",
-            "gemini/gemini-2.5-pro",
-        ],
-    },
     "Mistral": {
         "prefix":       "mistral",
         "default_model":"mistral/mistral-small-latest",
@@ -88,6 +108,158 @@ PROVIDERS = {
         ],
     },
 }
+
+
+def fetch_groq_models(api_key: str | None = None) -> list[str]:
+    """Fetch live model list from Groq API."""
+    FALLBACK = [
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+    ]
+    try:
+        key = api_key or os.environ.get("GROQ_API_KEY", "")
+        if not key:
+            return FALLBACK
+        resp = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        ids = sorted(m["id"] for m in data if m.get("id"))
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_openai_models(api_key: str | None = None) -> list[str]:
+    """Fetch live GPT model list from OpenAI API (chat-capable only)."""
+    FALLBACK = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"]
+    try:
+        key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not key:
+            return FALLBACK
+        resp = requests.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        ids = sorted(m["id"] for m in data if m.get("id") and "gpt" in m.get("id", ""))
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_anthropic_models(api_key: str | None = None) -> list[str]:
+    """Fetch live model list from Anthropic API."""
+    FALLBACK = [
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
+    ]
+    try:
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not key:
+            return FALLBACK
+        resp = requests.get(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        ids = sorted(m["id"] for m in data if m.get("id"))
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_gemini_models(api_key: str | None = None) -> list[str]:
+    """Fetch live Gemini model list from Google AI API."""
+    FALLBACK = [
+        "gemini/gemini-2.5-flash",
+        "gemini/gemini-2.0-flash",
+        "gemini/gemini-2.0-flash-lite",
+        "gemini/gemini-1.5-flash",
+        "gemini/gemini-1.5-pro",
+        "gemini/gemini-2.5-pro",
+    ]
+    try:
+        key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        if not key:
+            return FALLBACK
+        resp = requests.get(
+            f"https://generativelanguage.googleapis.com/v1beta/models?key={key}",
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("models", [])
+        ids = sorted(
+            f"gemini/{m['name'].split('/')[-1]}"
+            for m in data
+            if "generateContent" in m.get("supportedGenerationMethods", [])
+        )
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_mistral_models(api_key: str | None = None) -> list[str]:
+    """Fetch live model list from Mistral API."""
+    FALLBACK = [
+        "mistral/mistral-small-latest",
+        "mistral/mistral-medium-latest",
+        "mistral/mistral-large-latest",
+        "mistral/codestral-latest",
+    ]
+    try:
+        key = api_key or os.environ.get("MISTRAL_API_KEY", "")
+        if not key:
+            return FALLBACK
+        resp = requests.get(
+            "https://api.mistral.ai/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        ids = sorted(f"mistral/{m['id']}" for m in data if m.get("id"))
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_ollama_models(api_key: str | None = None) -> list[str]:
+    """Fetch locally installed models from a running Ollama server."""
+    FALLBACK = PROVIDERS["Ollama (local)"]["models"]
+    try:
+        resp = requests.get("http://localhost:11434/api/tags", timeout=3)
+        resp.raise_for_status()
+        data = resp.json().get("models", [])
+        ids = [f"ollama/{m['name']}" for m in data if m.get("name")]
+        return ids if ids else FALLBACK
+    except Exception:
+        return FALLBACK
+
+
+def fetch_provider_models(prefix: str, api_key: str | None = None) -> list[str]:
+    """Dispatch to the correct per-provider fetch function."""
+    dispatch = {
+        "ollama":     fetch_ollama_models,
+        "openrouter": fetch_openrouter_free_models,
+        "groq":       fetch_groq_models,
+        "openai":     fetch_openai_models,
+        "anthropic":  fetch_anthropic_models,
+        "gemini":     fetch_gemini_models,
+        "mistral":    fetch_mistral_models,
+    }
+    fn = dispatch.get(prefix)
+    return fn(api_key) if fn else []
 
 
 def fetch_openrouter_free_models(api_key: str | None = None) -> list[str]:
@@ -195,6 +367,8 @@ def llm_call(messages: list,
         )
         if api_key:
             kwargs["api_key"] = api_key
+        if model.startswith("ollama/"):
+            kwargs["api_base"] = "http://localhost:11434"
 
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content

@@ -111,9 +111,9 @@ export default function KnowledgeGraph({ graphData, sectionPageMap = {}, onNodeC
         });
         network.on('blurNode', () => setHoveredNode(null));
         network.on('click', ({ nodes }) => {
-          if (nodes.length === 1 && onNodeClick) {
+          if (nodes.length === 1) {
             const n = graphData.nodes[nodes[0]];
-            if (n) onNodeClick(n.section_id);
+            if (n && onNodeClick) onNodeClick(n.section_id);
           }
         });
       });

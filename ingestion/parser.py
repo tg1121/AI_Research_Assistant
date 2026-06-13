@@ -46,7 +46,11 @@ def _load_from_cache(paper_id: str) -> str | None:
         if os.path.exists(path):
             print(f"  Local cache hit: {paper_id}")
             with open(path, encoding="utf-8") as f:
-                return f.read()
+                raw = f.read()
+            # Migrate old cache files that still have {N}--- separators instead of \f
+            if '\f' not in raw and _PAGE_SEP_RE.search(raw):
+                raw = _PAGE_SEP_RE.sub('\f', raw)
+            return raw
         return None
     # Supabase
     try:
@@ -84,7 +88,9 @@ def _save_to_cache(paper_id: str, raw_md: str):
 
 # ── Parser implementations ────────────────────────────────────────────
 
-_PAGE_SEP = "-" * 48   # Marker's default page separator when paginate_output=True
+# Marker's page separator when paginate_output=True.
+# Format: "{N}------------------------------------------------" where N is the 0-based page index.
+_PAGE_SEP_RE = re.compile(r'\n\{\d+\}-+\n')
 
 
 def _parse_pymupdf(pdf_path: str) -> str:
@@ -116,7 +122,7 @@ def _parse_marker_local(pdf_path: str, cancel_event=None) -> str:
         try:
             rendered = _local_converter(pdf_path)
             raw, _, _ = text_from_rendered(rendered)
-            result_holder[0] = re.sub(r'\n' + re.escape(_PAGE_SEP) + r'\n', '\f', raw)
+            result_holder[0] = _PAGE_SEP_RE.sub('\f', raw)
         except Exception as e:
             exc_holder[0] = e
 
@@ -167,7 +173,7 @@ def _parse_marker_api(pdf_path: str, api_key: str, cancel_event=None) -> str:
         result = poll.json()
         if result.get("status") == "complete":
             md = result["markdown"]
-            md = re.sub(r'\n' + re.escape(_PAGE_SEP) + r'\n', '\f', md)
+            md = _PAGE_SEP_RE.sub('\f', md)
             return md
         if result.get("status") == "error":
             raise RuntimeError(f"Marker API error: {result}")
@@ -178,7 +184,9 @@ def _parse_marker_api(pdf_path: str, api_key: str, cancel_event=None) -> str:
 
 def parse_document(pdf_path: str, paper_id: str,
                    datalab_api_key: str | None = None,
-                   cancel_event=None) -> Document:
+                   cancel_event=None,
+                   domain: str | None = None,
+                   no_cache_save: bool = False) -> Document:
     """
     Parse a PDF, using cache if available.
     Mode selection:
@@ -192,17 +200,23 @@ def parse_document(pdf_path: str, paper_id: str,
     if not raw_md:
         admin_mode = os.environ.get("ADMIN_MODE", "").lower() == "true"
 
-        if admin_mode:
+        # Local Marker only for explicit "math" — "auto" is always resolved before calling here
+        if admin_mode and domain == "math":
             print(f"  [Admin] Running marker locally: {pdf_path}")
-            raw_md = _parse_marker_local(pdf_path, cancel_event=cancel_event)
-        elif datalab_api_key:
+            try:
+                raw_md = _parse_marker_local(pdf_path, cancel_event=cancel_event)
+            except Exception as exc:
+                print(f"  [Admin] Marker failed ({exc}), falling back to PyMuPDF")
+                raw_md = _parse_pymupdf(pdf_path)
+        elif datalab_api_key and domain != "non-math":
             print(f"  [API] Calling Datalab Marker API: {paper_id}")
             raw_md = _parse_marker_api(pdf_path, datalab_api_key, cancel_event=cancel_event)
         else:
             print(f"  [PyMuPDF] Parsing: {pdf_path}")
             raw_md = _parse_pymupdf(pdf_path)
 
-        _save_to_cache(paper_id, raw_md)
+        if not no_cache_save:
+            _save_to_cache(paper_id, raw_md)
 
     is_markdown = raw_md.strip().startswith("#") or "\n##" in raw_md
     title    = _extract_title_md(raw_md) if is_markdown else _extract_title_plain(raw_md)
@@ -272,6 +286,10 @@ def _split_sections_md(md: str) -> list[Section]:
         if title.lower() in ("abstract", "introduction", "motivation", "overview"):
             abstract_idx = i
             break
+
+    # cursor must start at the byte offset of the first kept part in the original md,
+    # not at 0 — otherwise _page_at counts \f from the beginning and everything is page 1.
+    cursor = sum(len(p) for p in parts[:abstract_idx]) if abstract_idx is not None else 0
     if abstract_idx is not None:
         parts = parts[abstract_idx:]
 
@@ -280,7 +298,6 @@ def _split_sections_md(md: str) -> list[Section]:
     current_page  = 1
     current_text  = []
     section_idx   = 0
-    cursor        = 0
 
     for part in parts:
         if re.match(r'^#{1,3} ', part):

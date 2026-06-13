@@ -1,118 +1,121 @@
 import { useState, useEffect } from 'react';
-import { fetchProviders, fetchOpenRouterModels } from '../api';
+import { fetchProviders, fetchProviderModels } from '../api';
 
-export default function Sidebar({ settings, onUpdate }) {
-  // providers: array of {name, prefix, default_model, key_hint, notes, models}
-  const [providers, setProviders] = useState([]);
-  const [loadError, setLoadError] = useState(null);
-
-  // OpenRouter-specific: live free-model list + loading flag
-  const [orModels, setOrModels] = useState([]);
+export default function Sidebar({ settings, onUpdate, authUser, onLogout, width }) {
+  const [providers, setProviders]       = useState([]);
+  const [loadError, setLoadError]       = useState(null);
+  const [orModels, setOrModels]           = useState([]);
   const [fetchingOrModels, setFetchingOrModels] = useState(false);
+  const [ollamaModels, setOllamaModels]   = useState([]);
+  const [fetchingOllama, setFetchingOllama] = useState(false);
+  const [linked, setLinked]             = useState(true);
+  const [applied, setApplied]           = useState(false);
 
-  const [linked, setLinked] = useState(true);
+  // ── all inputs are draft until Apply Settings ─────────────────────
+  const [draft, setDraft] = useState({
+    provider:            settings.provider            || '',
+    prefix:              settings.prefix              || '',
+    model:               settings.model               || '',
+    apiKey:              settings.apiKey              || '',
+    readerExpertise:     settings.readerExpertise     ?? 0,
+    scientificKnowledge: settings.scientificKnowledge ?? 0,
+    languageComplexity:  settings.languageComplexity  ?? 0,
+    domain:              settings.domain              || 'auto',
+  });
 
-  // Draft key — only committed to parent settings when user clicks Save
-  const [draftKey, setDraftKey] = useState('');
-  const [keySaved, setKeySaved] = useState(false);
+  const setDraftField = (key, val) => setDraft(d => ({ ...d, [key]: val }));
 
-  // ── load providers from backend once on mount ──────────────────────
+  // ── load providers once on mount ──────────────────────────────────
   useEffect(() => {
     fetchProviders()
       .then(data => {
         setProviders(data);
-        // Initialise settings with the first provider if nothing is selected yet
-        if (!settings.provider && data.length > 0) {
+        if (!draft.provider && data.length > 0) {
           const first = data[0];
-          onUpdate(s => ({
-            ...s,
-            provider:  first.name,
-            prefix:    first.prefix,
-            model:     first.default_model,
-          }));
+          setDraft(d => ({ ...d, provider: first.name, prefix: first.prefix, model: first.default_model }));
         }
       })
       .catch(err => setLoadError(err.message));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── derived info for the currently selected provider ──────────────
-  const provInfo    = providers.find(p => p.name === settings.provider) ?? null;
-  const isOpenRouter = settings.prefix === 'openrouter';
-
-  // ── reset draft key and OR model list when provider changes ───────
+  // ── reset provider-specific model lists when provider changes ────
   useEffect(() => {
-    setDraftKey('');
-    setKeySaved(false);
     setOrModels([]);
-  }, [settings.provider]);
+    setOllamaModels([]);
+    if (draft.prefix === 'ollama') {
+      setFetchingOllama(true);
+      fetchProviderModels('ollama', null)
+        .then(({ models }) => {
+          const list = models ?? [];
+          setOllamaModels(list);
+          if (list.length > 0) setDraftField('model', list[0]);
+        })
+        .catch(() => {})
+        .finally(() => setFetchingOllama(false));
+    }
+  }, [draft.prefix]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── helpers ───────────────────────────────────────────────────────
-  const set = (key, val) => onUpdate(s => ({ ...s, [key]: val }));
+  const provInfo     = providers.find(p => p.name === draft.provider) ?? null;
+  const isOpenRouter = draft.prefix === 'openrouter';
+  const isOllama     = draft.prefix === 'ollama';
+  const fixedModels  = provInfo?.models ?? [];
 
   const handleProviderChange = (name) => {
     const info = providers.find(p => p.name === name);
     if (!info) return;
-    onUpdate(s => ({
-      ...s,
+    setDraft(d => ({
+      ...d,
       provider: info.name,
       prefix:   info.prefix,
       model:    info.models[0] ?? info.default_model,
-      apiKey:   '',            // clear stale key from previous provider
+      apiKey:   '',
     }));
+    setOrModels([]);
   };
 
   const applyKey = async () => {
-    const key = draftKey.trim();
-    if (!key) return;
-    onUpdate(s => ({ ...s, apiKey: key }));
-    setKeySaved(true);
-    setTimeout(() => setKeySaved(false), 2000);
-
-    if (isOpenRouter) {
-      setFetchingOrModels(true);
-      try {
-        const { models } = await fetchOpenRouterModels(key);
-        setOrModels(models ?? []);
-        if (models?.length > 0) {
-          onUpdate(s => ({ ...s, model: models[0] }));
-        }
-      } catch (e) {
-        console.error('OpenRouter model fetch failed:', e);
-      } finally {
-        setFetchingOrModels(false);
-      }
+    const key = draft.apiKey.trim();
+    if (!key || !isOpenRouter) return;
+    setFetchingOrModels(true);
+    try {
+      const { models } = await fetchProviderModels(draft.prefix, key);
+      const list = models ?? [];
+      setOrModels(list);
+      if (list.length > 0) setDraftField('model', list[0]);
+    } catch (e) {
+      console.error('OpenRouter model fetch failed:', e);
+    } finally {
+      setFetchingOrModels(false);
     }
   };
 
   const handleExpertise = (v) => {
     if (linked) {
-      onUpdate(s => ({
-        ...s,
-        readerExpertise:     v,
-        scientificKnowledge: v,
-        languageComplexity:  v,
-      }));
+      setDraft(d => ({ ...d, readerExpertise: v, scientificKnowledge: v, languageComplexity: v }));
     } else {
-      set('readerExpertise', v);
+      setDraftField('readerExpertise', v);
     }
   };
 
-  const fixedModels = provInfo?.models ?? [];
+  const handleApply = () => {
+    onUpdate(s => ({ ...s, ...draft }));
+    setApplied(true);
+    setTimeout(() => setApplied(false), 2000);
+  };
 
   // ── loading / error states ────────────────────────────────────────
   if (loadError) {
     return (
-      <div style={sidebarStyle}>
+      <div style={width ? { ...sidebarStyle, width, minWidth: width } : sidebarStyle}>
         <div style={{ color: '#EF4444', fontSize: 12 }}>
           Failed to load settings from backend:<br />{loadError}
         </div>
       </div>
     );
   }
-
   if (providers.length === 0) {
     return (
-      <div style={sidebarStyle}>
+      <div style={width ? { ...sidebarStyle, width, minWidth: width } : sidebarStyle}>
         <div style={{ color: '#6B7280', fontSize: 13 }}>Loading settings…</div>
       </div>
     );
@@ -120,85 +123,61 @@ export default function Sidebar({ settings, onUpdate }) {
 
   return (
     <div style={sidebarStyle}>
-      <div style={{ fontWeight: 700 }}>⚙️ Settings</div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontWeight: 700 }}>⚙️ Settings</div>
+        {authUser && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: '#6B7280', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {authUser.email}
+            </span>
+            <button
+              onClick={onLogout}
+              title="Sign out"
+              style={{ background: 'none', border: '1px solid #374151', borderRadius: 5, color: '#6B7280', fontSize: 11, padding: '2px 8px', cursor: 'pointer' }}
+              onMouseEnter={e => e.target.style.color = '#F9FAFB'}
+              onMouseLeave={e => e.target.style.color = '#6B7280'}
+            >
+              out
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* ── Provider ──────────────────────────────────────────────── */}
       <Section title="Provider">
-        <select
-          value={settings.provider}
-          onChange={e => handleProviderChange(e.target.value)}
-          style={sel}
-        >
-          {providers.map(p => (
-            <option key={p.name} value={p.name}>{p.name}</option>
-          ))}
+        <select value={draft.provider} onChange={e => handleProviderChange(e.target.value)} style={sel}>
+          {providers.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
         </select>
         {provInfo?.notes && <Note>{provInfo.notes}</Note>}
       </Section>
 
-      {/* ── API Key ───────────────────────────────────────────────── */}
-      <Section title="API Key">
-        <input
-          type="password"
-          value={draftKey}
-          onChange={e => { setDraftKey(e.target.value); setKeySaved(false); }}
-          onKeyDown={e => e.key === 'Enter' && applyKey()}
-          onBlur={() => isOpenRouter && applyKey()}
-          placeholder={provInfo?.key_hint ?? '...'}
-          style={{ ...inp, marginBottom: 6 }}
-          autoComplete="off"
-        />
-        <button
-          onClick={applyKey}
-          style={{
-            width: '100%',
-            padding: '6px 0',
-            background: keySaved ? '#065F46' : '#1D4ED8',
-            border: 'none',
-            borderRadius: 4,
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: 'pointer',
-            transition: 'background 0.2s',
-          }}
-        >
-          {keySaved ? '✓ Saved' : 'Apply Key'}
-        </button>
-        {settings.apiKey && !keySaved && <Note>Key applied ✓</Note>}
-      </Section>
+      {/* ── API Key (hidden for providers that need no key, e.g. Ollama) */}
+      {provInfo?.env_var !== '' && (
+        <Section title="API Key">
+          <input
+            type="password"
+            value={draft.apiKey}
+            onChange={e => setDraftField('apiKey', e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && applyKey()}
+            onBlur={() => isOpenRouter && applyKey()}
+            placeholder={provInfo?.key_hint ?? '...'}
+            style={inp}
+            autoComplete="off"
+          />
+        </Section>
+      )}
 
       {/* ── Model ─────────────────────────────────────────────────── */}
       <Section title="Model">
-        {isOpenRouter && !settings.apiKey ? (
-          <div style={{
-            padding: '6px 8px',
-            background: '#374151',
-            border: '1px solid #4B5563',
-            borderRadius: 4,
-            color: '#6B7280',
-            fontSize: 13,
-          }}>
-            Enter API key to load models
-          </div>
+        {isOpenRouter && !draft.apiKey ? (
+          <div style={placeholder}>Enter API key then Apply Settings</div>
         ) : isOpenRouter && fetchingOrModels ? (
-          <div style={{
-            padding: '6px 8px',
-            background: '#374151',
-            border: '1px solid #4B5563',
-            borderRadius: 4,
-            color: '#9CA3AF',
-            fontSize: 13,
-          }}>
-            Fetching models…
-          </div>
+          <div style={placeholder}>Fetching models…</div>
+        ) : isOllama && fetchingOllama ? (
+          <div style={placeholder}>Scanning local Ollama…</div>
         ) : (
-          <select
-            value={settings.model}
-            onChange={e => set('model', e.target.value)}
-            style={sel}
-          >
-            {(isOpenRouter ? orModels : fixedModels).map(m => (
+          <select value={draft.model} onChange={e => setDraftField('model', e.target.value)} style={sel}>
+            {(isOpenRouter ? orModels : isOllama && ollamaModels.length > 0 ? ollamaModels : fixedModels).map(m => (
               <option key={m} value={m}>{m}</option>
             ))}
           </select>
@@ -206,23 +185,22 @@ export default function Sidebar({ settings, onUpdate }) {
         {isOpenRouter && !fetchingOrModels && orModels.length > 0 && (
           <Note>{orModels.length} free models</Note>
         )}
+        {isOllama && !fetchingOllama && (
+          <Note>{ollamaModels.length > 0 ? `${ollamaModels.length} installed` : 'Ollama not running — showing defaults'}</Note>
+        )}
       </Section>
 
       {/* ── Paper Domain ─────────────────────────────────────────── */}
       <Section title="Paper Domain">
-        <select
-          value={settings.domain ?? 'auto'}
-          onChange={e => set('domain', e.target.value)}
-          style={sel}
-        >
+        <select value={draft.domain} onChange={e => setDraftField('domain', e.target.value)} style={sel}>
           <option value="auto">Auto-detect</option>
-          <option value="math">Math / STEM</option>
-          <option value="english">English / Humanities</option>
+          <option value="math">Math-heavy</option>
+          <option value="non-math">Non-math</option>
         </select>
         <Note>
-          {settings.domain === 'math'    && 'Regex extraction: theorems, lemmas, proofs'}
-          {settings.domain === 'english' && 'LLM extraction: claims, concepts, evidence'}
-          {(!settings.domain || settings.domain === 'auto') && 'Detected from document content'}
+          {draft.domain === 'math'     && 'Knowledge graph + equation chains (regex-based)'}
+          {draft.domain === 'non-math' && 'Section synthesis with keyword extraction, 1 LLM call'}
+          {(!draft.domain || draft.domain === 'auto') && 'Detected from document content'}
         </Note>
       </Section>
 
@@ -234,30 +212,25 @@ export default function Sidebar({ settings, onUpdate }) {
           fontSize: 12, color: '#9CA3AF', marginBottom: 12,
           cursor: 'pointer', userSelect: 'none',
         }}>
-          <input
-            type="checkbox"
-            checked={linked}
-            onChange={e => setLinked(e.target.checked)}
-          />
+          <input type="checkbox" checked={linked} onChange={e => setLinked(e.target.checked)} />
           Link all parameters
         </label>
-        <Slider
-          label="Expertise"
-          value={settings.readerExpertise}
-          onChange={handleExpertise}
-        />
-        <Slider
-          label="Scientific"
-          value={settings.scientificKnowledge}
-          onChange={v => !linked && set('scientificKnowledge', v)}
-          disabled={linked}
-        />
-        <Slider
-          label="Language"
-          value={settings.languageComplexity}
-          onChange={v => !linked && set('languageComplexity', v)}
-          disabled={linked}
-        />
+        <Slider label="Expertise"   value={draft.readerExpertise}     onChange={handleExpertise} />
+        <Slider label="Scientific"  value={draft.scientificKnowledge} onChange={v => !linked && setDraftField('scientificKnowledge', v)} disabled={linked} />
+        <Slider label="Language"    value={draft.languageComplexity}  onChange={v => !linked && setDraftField('languageComplexity', v)}  disabled={linked} />
+      </div>
+
+      {/* ── Apply Settings ───────────────────────────────────────── */}
+      <div style={{ marginTop: 'auto', paddingTop: 12, borderTop: '1px solid #374151' }}>
+        <button onClick={handleApply} style={{
+          width: '100%', padding: '9px 0',
+          background: applied ? '#065F46' : '#2563EB',
+          border: 'none', borderRadius: 6,
+          color: '#fff', fontWeight: 700, fontSize: 14,
+          cursor: 'pointer', transition: 'background 0.2s',
+        }}>
+          {applied ? '✓ Settings Applied' : 'Apply Settings'}
+        </button>
       </div>
     </div>
   );
@@ -269,12 +242,8 @@ function Section({ title, children }) {
   return (
     <div>
       <label style={{
-        display: 'block',
-        fontSize: 11,
-        color: '#9CA3AF',
-        marginBottom: 5,
-        textTransform: 'uppercase',
-        letterSpacing: '0.05em',
+        display: 'block', fontSize: 11, color: '#9CA3AF',
+        marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em',
       }}>
         {title}
       </label>
@@ -284,11 +253,7 @@ function Section({ title, children }) {
 }
 
 function Note({ children }) {
-  return (
-    <div style={{ color: '#6B7280', fontSize: 11, marginTop: 4 }}>
-      {children}
-    </div>
-  );
+  return <div style={{ color: '#6B7280', fontSize: 11, marginTop: 4 }}>{children}</div>;
 }
 
 function Slider({ label, value, onChange, disabled }) {
@@ -298,12 +263,10 @@ function Slider({ label, value, onChange, disabled }) {
         display: 'flex', justifyContent: 'space-between',
         fontSize: 12, color: disabled ? '#4B5563' : '#9CA3AF', marginBottom: 4,
       }}>
-        <span>{label}</span>
-        <span>{value.toFixed(2)}</span>
+        <span>{label}</span><span>{value.toFixed(2)}</span>
       </div>
       <input
-        type="range"
-        min={0} max={1} step={0.05}
+        type="range" min={0} max={1} step={0.05}
         value={value}
         onChange={e => onChange(parseFloat(e.target.value))}
         disabled={disabled}
@@ -313,43 +276,31 @@ function Slider({ label, value, onChange, disabled }) {
   );
 }
 
-// ── shared styles ─────────────────────────────────────────────────────
+// ── styles ────────────────────────────────────────────────────────────
 
 const sidebarStyle = {
-  width: 284,
-  minWidth: 284,
-  background: '#1F2937',
-  borderRight: '1px solid #374151',
-  overflowY: 'auto',
-  padding: '16px 14px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 16,
+  width: 284, minWidth: 284,
+  background: '#1F2937', borderRight: '1px solid #374151',
+  overflowY: 'auto', padding: '16px 14px',
+  display: 'flex', flexDirection: 'column', gap: 16,
 };
 
 const sel = {
-  width: '100%',
-  background: '#374151',
-  border: '1px solid #4B5563',
-  borderRadius: 4,
-  color: '#F9FAFB',
-  padding: '6px 28px 6px 8px',
-  outline: 'none',
-  cursor: 'pointer',
-  // suppress OS-native chrome so both dropdowns look identical
-  appearance: 'none',
-  WebkitAppearance: 'none',
+  width: '100%', background: '#374151', border: '1px solid #4B5563',
+  borderRadius: 4, color: '#F9FAFB', padding: '6px 28px 6px 8px',
+  outline: 'none', cursor: 'pointer',
+  appearance: 'none', WebkitAppearance: 'none',
   backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239CA3AF'/%3E%3C/svg%3E\")",
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 9px center',
+  backgroundRepeat: 'no-repeat', backgroundPosition: 'right 9px center',
 };
 
 const inp = {
-  width: '100%',
-  background: '#374151',
-  border: '1px solid #4B5563',
-  borderRadius: 4,
-  color: '#F9FAFB',
-  padding: '6px 8px',
-  outline: 'none',
+  width: '100%', background: '#374151', border: '1px solid #4B5563',
+  borderRadius: 4, color: '#F9FAFB', padding: '6px 8px',
+  outline: 'none', boxSizing: 'border-box',
+};
+
+const placeholder = {
+  padding: '6px 8px', background: '#374151', border: '1px solid #4B5563',
+  borderRadius: 4, color: '#6B7280', fontSize: 13,
 };

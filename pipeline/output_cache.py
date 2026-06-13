@@ -12,6 +12,7 @@ import json
 import os
 import re
 from ingestion.document import Document
+from graph.math_graph import MathGraph
 
 OUTPUTS_DIR = "outputs"
 _IS_LOCAL   = os.environ.get("ADMIN_MODE", "").lower() == "true"
@@ -112,6 +113,71 @@ def save_cache(doc, reader_expertise, scientific_knowledge, language_complexity,
         print(f"  [cache save failed] {e}")
     return key
 
+# ── Graph cache (math papers only, keyed by paper_id alone) ──────────
+
+def save_graph(paper_id: str, graph: MathGraph) -> None:
+    graph_json = graph.to_json()
+    if _IS_LOCAL:
+        os.makedirs(OUTPUTS_DIR, exist_ok=True)
+        path = os.path.join(OUTPUTS_DIR, f"{paper_id}__graph.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(graph_json)
+        print(f"  [local graph saved] {path}")
+        return
+    try:
+        _db().table("output_cache").upsert({
+            "cache_key": f"{paper_id}__graph",
+            "paper_id":  paper_id,
+            "doc_json":  graph_json,
+        }).execute()
+        print(f"  [supabase graph saved] {paper_id}__graph")
+    except Exception as e:
+        print(f"  [graph save failed] {e}")
+
+
+def load_graph(paper_id: str) -> MathGraph | None:
+    if _IS_LOCAL:
+        path = os.path.join(OUTPUTS_DIR, f"{paper_id}__graph.json")
+        if not os.path.exists(path):
+            return None
+        print(f"  [local graph hit] {path}")
+        with open(path, encoding="utf-8") as f:
+            return MathGraph.from_json(f.read())
+    try:
+        result = (
+            _db().table("output_cache")
+            .select("doc_json")
+            .eq("cache_key", f"{paper_id}__graph")
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            print(f"  [supabase graph hit] {paper_id}__graph")
+            return MathGraph.from_json(result.data[0]["doc_json"])
+    except Exception as e:
+        print(f"  [graph load failed] {e}")
+    return None
+
+
+# ── Delete all cached data for a paper ───────────────────────────────
+
+def delete_paper_cache(paper_id: str) -> None:
+    if _IS_LOCAL:
+        if os.path.exists(OUTPUTS_DIR):
+            prefix = f"{paper_id}__"
+            for fname in os.listdir(OUTPUTS_DIR):
+                if fname.startswith(prefix) and fname.endswith(".json"):
+                    try:
+                        os.remove(os.path.join(OUTPUTS_DIR, fname))
+                    except OSError:
+                        pass
+        return
+    try:
+        _db().table("output_cache").delete().eq("paper_id", paper_id).execute()
+    except Exception as e:
+        print(f"  [cache delete failed] {e}")
+
+
 # ── List cached profiles ──────────────────────────────────────────────
 
 def list_cached_profiles(paper_id: str) -> list[dict]:
@@ -123,6 +189,8 @@ def list_cached_profiles(paper_id: str) -> list[dict]:
         for fname in sorted(os.listdir(OUTPUTS_DIR)):
             if fname.startswith(prefix) and fname.endswith(".json"):
                 inner = fname[len(prefix):-5]
+                if inner == "graph":
+                    continue
                 try:
                     if "__" in inner:
                         profile_part, model_slug = inner.split("__", 1)
@@ -155,6 +223,8 @@ def list_cached_profiles(paper_id: str) -> list[dict]:
         for row in (result.data or []):
             key = row["cache_key"]
             inner = key[len(paper_id) + 2:]  # strip "paper_id__"
+            if inner == "graph":
+                continue
             try:
                 if "__" in inner:
                     profile_part, model_slug = inner.split("__", 1)

@@ -53,6 +53,7 @@ class DocMap:
 
     def to_prompt_block(self) -> str:
         """Compact text for agent prompt injection. ~300 tokens."""
+        is_prose = "prose" in self.dominant_type
         lines = [
             f'Paper: "{self.paper_title}"',
             f"Sections ({len(self.sections)} total, "
@@ -61,13 +62,20 @@ class DocMap:
         for s in self.sections:
             dep_str = (f" → depends on: {', '.join(s.depends_on)}"
                        if s.depends_on else "")
-            lines.append(
-                f"  [{s.section_id}] {s.title} "
-                f"(importance={s.importance}, "
-                f"math_objects={s.math_object_count}, "
-                f"proofs={s.proof_count})"
-                f"{dep_str}"
-            )
+            if is_prose:
+                lines.append(
+                    f"  [{s.section_id}] {s.title} "
+                    f"(importance={s.importance}, concepts={s.math_object_count})"
+                    f"{dep_str}"
+                )
+            else:
+                lines.append(
+                    f"  [{s.section_id}] {s.title} "
+                    f"(importance={s.importance}, "
+                    f"math_objects={s.math_object_count}, "
+                    f"proofs={s.proof_count})"
+                    f"{dep_str}"
+                )
         if self.top_nodes:
             lines.append("\nMost referenced nodes:")
             for n in self.top_nodes[:5]:
@@ -111,7 +119,35 @@ class DocMap:
         return cls.from_dict(json.loads(s))
 
 
-# ── builder ───────────────────────────────────────────────────────────
+# ── builders ──────────────────────────────────────────────────────────
+
+def build_english_doc_map(doc, section_data: list[dict]) -> "DocMap":
+    """
+    Build DocMap for non-math papers from section keyword data.
+    importance = keyword richness (TF-IDF keyword count)
+    math_object_count repurposed as named concept count
+    """
+    sections = []
+    for s_doc, s_data in zip(doc.sections, section_data):
+        sections.append(SectionEntry(
+            section_id=s_doc.section_id,
+            title=s_doc.title,
+            importance=len(s_data.get("keywords", [])),
+            math_object_count=len(s_data.get("named_phrases", [])),
+            proof_count=0,
+            depends_on=[],
+            referenced_by=[],
+        ))
+    return DocMap(
+        paper_id=doc.paper_id,
+        paper_title=doc.title,
+        sections=sections,
+        top_nodes=[],
+        total_nodes=len(doc.sections),
+        total_edges=0,
+        dominant_type="prose-heavy",
+    )
+
 
 def build_doc_map(graph: MathGraph, paper_id: str, paper_title: str) -> DocMap:
     """Build DocMap from a finalized MathGraph. No LLM calls."""

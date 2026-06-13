@@ -22,8 +22,7 @@ import re
 from graph.math_graph import MathGraph, MathNode
 from graph.doc_map import DocMap
 
-_MAX_SECTION_CHARS = 1200
-_MAX_NODE_CHARS    = 250
+_MAX_NODE_CHARS = 400
 
 _STOPWORDS = {
     "the","a","an","is","it","in","on","of","to","and","or","for",
@@ -40,13 +39,33 @@ def consult_doc_map(doc_map: DocMap) -> str:
 
 # ── Tool 2 ────────────────────────────────────────────────────────────
 
+def _sample_section(text: str) -> str:
+    """
+    Return at least 50% of section text sampled from start, middle, and end.
+    A flat head-truncation misses definitions that appear mid-section. Distributing
+    the sample across three positions ensures the answer is covered regardless of
+    where in the section the author placed it.
+    """
+    text = (text or "").strip()
+    n = len(text)
+    total = min(max(n // 2, 1200), 6000)  # 50% of section, clamped 1200–6000
+    if n <= total:
+        return text
+    chunk  = total // 3
+    start  = text[:chunk]
+    mid_s  = (n - chunk) // 2
+    middle = text[mid_s:mid_s + chunk]
+    end    = text[n - chunk:]
+    return f"{start}\n[...]\n{middle}\n[...]\n{end}"
+
+
 def retrieve_section(graph: MathGraph, section_id: str) -> str:
     node = graph.nodes.get(section_id)
     if not node:
         return f"[Section '{section_id}' not found]"
 
     parts = [f"=== SECTION: {node.label} [{section_id}] ===",
-             node.raw_text[:_MAX_SECTION_CHARS]]
+             _sample_section(node.raw_text or "")]
 
     math_objs = graph.nodes_in_section(section_id)
     if math_objs:
