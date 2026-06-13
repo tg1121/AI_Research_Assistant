@@ -42,6 +42,7 @@ from backend.models import (
 from backend.state import PaperStore
 from backend.auth import get_current_user
 import backend.db as db
+import backend.storage as storage
 
 # ── lazy pipeline imports (avoid circular imports at module level) ─────
 def _imports():
@@ -354,10 +355,7 @@ async def upload_paper(
     except db.StorageLimitError as exc:
         raise HTTPException(status_code=413, detail=str(exc))
 
-    os.makedirs("uploads", exist_ok=True)
-    pdf_path = f"uploads/{file.filename}"
-    with open(pdf_path, "wb") as f:
-        f.write(content)
+    pdf_path = storage.save_pdf(str(current_user.id), paper_id, content)
 
     # Unblock any thread stuck waiting on the old state before replacing it
     old = store.get(paper_id)
@@ -418,7 +416,9 @@ async def cancel_paper(paper_id: str, current_user=Depends(get_current_user)):
 async def list_papers(current_user=Depends(get_current_user)):
     """Return all papers the user has ever processed, filtered to PDFs still on disk."""
     entries = db.get_papers(str(current_user.id))
-    return [e for e in entries if os.path.exists(f"uploads/{e['paper_id']}.pdf")]
+    if os.environ.get("ADMIN_MODE", "").lower() == "true":
+        return [e for e in entries if storage.exists_locally(e["paper_id"])]
+    return entries
 
 
 @router.delete("/paper/{paper_id}")
@@ -432,14 +432,7 @@ async def delete_paper(paper_id: str, current_user=Depends(get_current_user)):
         raise HTTPException(404, "Paper not found")
 
     db.delete_paper(user_id, paper_id)
-
-    # Remove PDF
-    pdf_path = f"uploads/{paper_id}.pdf"
-    if os.path.exists(pdf_path):
-        try:
-            os.remove(pdf_path)
-        except OSError:
-            pass
+    storage.delete_pdf(user_id, paper_id)
 
     # Remove parsed markdown cache
     from ingestion.parser import LOCAL_CACHE_DIR
@@ -467,9 +460,14 @@ async def open_paper(paper_id: str, current_user=Depends(get_current_user)):
     be served and chat works. Tries to restore doc/graph/doc_map from the
     output cache; falls back to PDF-only mode if no cache exists.
     """
-    pdf_path = f"uploads/{paper_id}.pdf"
-    if not os.path.exists(pdf_path):
-        raise HTTPException(404, "PDF not found on disk")
+    user_papers = db.get_papers(str(current_user.id))
+    db_entry = next((e for e in user_papers if e["paper_id"] == paper_id), None)
+    if not db_entry:
+        raise HTTPException(404, "Paper not found")
+
+    pdf_path = storage.ensure_local(str(current_user.id), paper_id)
+    if not pdf_path:
+        raise HTTPException(404, "PDF not found in storage")
 
     existing = store.get(paper_id)
     if existing and existing.status == "done":
@@ -493,9 +491,8 @@ async def open_paper(paper_id: str, current_user=Depends(get_current_user)):
         store.update(paper_id, status="done")
         return {"status": "done", "restored": False}
 
-    # detected_domain from db record if available
-    user_papers = db.get_papers(str(current_user.id))
-    db_entry = next((e for e in user_papers if e["paper_id"] == paper_id), {})
+    # detected_domain from db record if available (db_entry already fetched above)
+    db_entry = db_entry or {}
     detected_domain = db_entry.get("detected_domain") or "non-math"
 
     if detected_domain == "math":
@@ -547,10 +544,18 @@ async def get_pdf(paper_id: str, token: str = "", current_user=None):
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-    pdf_path = f"uploads/{paper_id}.pdf"
-    if not os.path.exists(pdf_path):
-        raise HTTPException(404, "PDF file not found on disk")
-    return FileResponse(pdf_path, media_type="application/pdf")
+    if os.environ.get("ADMIN_MODE", "").lower() == "true":
+        pdf_path = f"uploads/{paper_id}.pdf"
+        if not os.path.exists(pdf_path):
+            raise HTTPException(404, "PDF file not found on disk")
+        return FileResponse(pdf_path, media_type="application/pdf")
+
+    user_id = str(resp.user.id)
+    signed_url = storage.get_signed_url(user_id, paper_id)
+    if not signed_url:
+        raise HTTPException(404, "PDF not found in storage")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url=signed_url)
 
 
 @router.get("/paper/{paper_id}/graph")
