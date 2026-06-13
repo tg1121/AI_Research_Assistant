@@ -204,7 +204,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
     const newIdx = tabs.length;
     setTabs(prev => [
       ...prev,
-      { paper_id: paperId, status: 'processing', progress: 0, progressText: 'Uploading…' },
+      { paper_id: paperId, status: 'processing', progress: 0, progressText: 'Uploading…', pdfReady: false },
     ]);
     setActiveIdx(newIdx);
 
@@ -218,6 +218,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
         datalabKey: settings.datalabKey,
         domain: settings.domain,
       });
+      setTabs(prev => prev.map(t => t.paper_id === paperId ? { ...t, pdfReady: true } : t));
       startPolling(paperId);
     } catch (err) {
       setTabs(prev => prev.map(t =>
@@ -252,7 +253,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
     const cached = cacheLoadOne(paper_id);
     if (cached) {
       const newIdx = tabs.length;
-      setTabs(prev => [...prev, { paper_id, status: 'done', fromCache: true, detectedDomain: detected_domain, ...cached }]);
+      setTabs(prev => [...prev, { paper_id, status: 'done', fromCache: true, pdfReady: true, detectedDomain: detected_domain, ...cached }]);
       setActiveIdx(newIdx);
       openPaper(paper_id)
         .then(() => Promise.all([getGraph(paper_id), getSummary(paper_id)]))
@@ -421,7 +422,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
               {panels.pdf ? (
                 <div style={{ width: panels.summary ? `${pdfPct}%` : '100%', flexShrink: 0, minWidth: 150, overflow: 'hidden', display: 'flex', flexDirection: 'column', borderRight: '1px solid #374151' }}>
                   <PanelHeader label="PDF" dir="left" onCollapse={() => toggle('pdf')} />
-                  <PdfViewer paperId={activePaper.paper_id} targetPage={targetPage} />
+                  <PdfViewer paperId={activePaper.pdfReady !== false ? activePaper.paper_id : null} targetPage={targetPage} />
                 </div>
               ) : (
                 <CollapseStrip label="PDF" dir="right" onClick={() => toggle('pdf')} />
