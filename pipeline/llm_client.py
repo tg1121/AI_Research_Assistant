@@ -430,13 +430,8 @@ def llm_call(messages: list,
         if resolved_key:
             kwargs["api_key"] = resolved_key
         if model.startswith("ollama/"):
-            if os.environ.get("SPACE_ID"):
-                raise RuntimeError(
-                    "Ollama is not available on HuggingFace Spaces — "
-                    "select a cloud provider (OpenRouter, Gemini, Groq, etc.) in the sidebar."
-                )
             kwargs["api_base"] = "http://localhost:11434"
-            kwargs["request_timeout"] = 900  # 15 min for slow local hardware
+            kwargs["request_timeout"] = 900  # 15 min for slow local / HF CPU
             _check_ollama_model(model)
 
         response = litellm.completion(**kwargs)

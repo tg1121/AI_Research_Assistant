@@ -310,9 +310,8 @@ async def marker_decision(paper_id: str, req: MarkerDecisionRequest,
 
 @router.get("/providers")
 async def list_providers():
-    """Return the provider catalogue. Ollama is excluded on HF Spaces (no local GPU)."""
+    """Return the full provider catalogue from llm_client.PROVIDERS."""
     from pipeline.llm_client import PROVIDERS
-    is_hf = bool(os.environ.get("SPACE_ID"))
     return [
         {
             "name":          name,
@@ -324,7 +323,6 @@ async def list_providers():
             "models":        info["models"],
         }
         for name, info in PROVIDERS.items()
-        if not (is_hf and info["prefix"] == "ollama")
     ]
 
 
