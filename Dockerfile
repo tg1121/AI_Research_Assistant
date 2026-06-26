@@ -12,7 +12,7 @@ WORKDIR /app
 
 # System deps needed for Ollama install and health-check wait
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates \
+    curl ca-certificates zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ollama
