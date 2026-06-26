@@ -16,21 +16,15 @@ litellm._turn_on_debug()
 # ── provider catalogue ────────────────────────────────────────────────
 
 PROVIDERS = {
-    "Ollama (local)": {
-        "prefix":       "ollama",
-        "default_model":"ollama/qwen2.5:14b",
-        "env_var":      "",
-        "key_hint":     "(no key needed)",
-        "notes":        "Runs locally via Ollama. Start with: ollama serve",
+    "Colab / HF Space (Qwen)": {
+        "prefix":        "hf_space",
+        "default_model": "hf_space/Qwen2.5-7B-Instruct",
+        "env_var":       "HF_SPACE_URL",
+        "key_hint":      "https://xxxx.gradio.live",
+        "notes":         "Qwen 2.5 7B running on Colab or HF Space. Set HF_SPACE_URL in .env.",
         "models": [
-            "ollama/llama3.2",
-            "ollama/llama3.1:8b",
-            "ollama/llama3.1:70b",
-            "ollama/qwen2.5:7b",
-            "ollama/qwen2.5:14b",
-            "ollama/mistral",
-            "ollama/deepseek-r1:8b",
-            "ollama/phi4",
+            "hf_space/Qwen2.5-7B-Instruct",
+            "hf_space/Qwen2.5-14B-Instruct",
         ],
     },
     "OpenRouter (free models)": {
@@ -237,7 +231,7 @@ def fetch_mistral_models(api_key: str | None = None) -> list[str]:
 
 def fetch_ollama_models(api_key: str | None = None) -> list[str]:
     """Fetch locally installed models from a running Ollama server."""
-    FALLBACK = PROVIDERS["Ollama (local)"]["models"]
+    FALLBACK = ["ollama/llama3.2", "ollama/qwen2.5:7b", "ollama/qwen2.5:14b"]
     try:
         resp = requests.get("http://localhost:11434/api/tags", timeout=3)
         resp.raise_for_status()
@@ -386,23 +380,30 @@ def _check_ollama_model(model: str) -> None:
 
 
 def _llm_call_hf_space(messages: list, max_tokens: int) -> str:
-    """Call the Qwen 2.5 14B ZeroGPU Gradio Space via its REST API."""
+    """Call a Gradio space (Colab share URL or HF Space) via gradio_client.
+    Works with Gradio 4.x and 5.x — handles the queue protocol automatically.
+    """
     space_url = os.environ.get("HF_SPACE_URL", "").rstrip("/")
     if not space_url:
         raise RuntimeError(
             "HF_SPACE_URL env var is not set. "
-            "Deploy qwen_space/ to HuggingFace and set HF_SPACE_URL=https://your-space.hf.space"
+            "Run qwen_space/colab_qwen.ipynb in Colab and paste the share URL here."
         )
-    resp = requests.post(
-        f"{space_url}/api/predict",
-        json={"data": [json.dumps(messages), max_tokens]},
-        timeout=360,
+    try:
+        from gradio_client import Client
+    except ImportError:
+        raise RuntimeError(
+            "gradio-client is not installed. Run: pip install gradio-client"
+        )
+    client = Client(space_url, verbose=False)
+    result = client.predict(
+        json.dumps(messages),
+        max_tokens,
+        api_name="/predict",
     )
-    resp.raise_for_status()
-    data = resp.json().get("data", [])
-    if not data:
-        raise ValueError("HF Space returned empty response")
-    return data[0]
+    if not isinstance(result, str):
+        raise ValueError(f"HF Space returned unexpected type: {type(result)}")
+    return result
 
 
 def llm_call(messages: list,
