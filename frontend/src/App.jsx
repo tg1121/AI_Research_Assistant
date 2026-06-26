@@ -249,44 +249,39 @@ function AuthenticatedApp({ authUser, onLogout }) {
     const existingIdx = tabs.findIndex(t => t.paper_id === paper_id);
     if (existingIdx !== -1) { setActiveIdx(existingIdx); return; }
 
-    // Local cache available — show instantly, then refresh graph from server
-    const cached = cacheLoadOne(paper_id);
-    if (cached) {
-      const newIdx = tabs.length;
-      setTabs(prev => [...prev, { paper_id, status: 'done', fromCache: true, pdfReady: true, detectedDomain: detected_domain, ...cached }]);
-      setActiveIdx(newIdx);
-      openPaper(paper_id)
-        .then(() => Promise.all([getGraph(paper_id), getSummary(paper_id)]))
-        .then(([graphData, summaryData]) => {
-          cacheSet(paper_id, graphData, summaryData);
-          setTabs(prev => prev.map(t => t.paper_id !== paper_id ? t
-            : { ...t, graphData, summaryData, detectedDomain: detected_domain }));
-        })
-        .catch(() => {});
-      return;
-    }
-
-    // No local cache — ask backend to restore from output cache
     const newIdx = tabs.length;
-    setTabs(prev => [...prev, { paper_id, status: 'processing', progress: 0, progressText: 'Restoring…' }]);
+    setTabs(prev => [...prev, { paper_id, status: 'processing', progress: 0, progressText: 'Restoring…', pdfReady: true, detectedDomain: detected_domain }]);
     setActiveIdx(newIdx);
+
     try {
-      const result = await openPaper(paper_id);
-      if (result.restored) {
+      const result = await openPaper(paper_id, {
+        model:                resolvedModel,
+        apiKey:               settings.apiKey,
+        readerExpertise:      settings.readerExpertise,
+        scientificKnowledge:  settings.scientificKnowledge,
+        languageComplexity:   settings.languageComplexity,
+      });
+      const domain = result.detected_domain || detected_domain;
+
+      if (result.status === 'processing') {
+        // Non-math: pipeline re-running — poll until done
+        startPolling(paper_id);
+      } else if (result.restored) {
+        // Math paper: restored synchronously from cache
         const [graphData, summaryData] = await Promise.all([getGraph(paper_id), getSummary(paper_id)]);
         cacheSet(paper_id, graphData, summaryData);
         setTabs(prev => prev.map(t => t.paper_id !== paper_id ? t
-          : { ...t, status: 'done', graphData, summaryData, fromCache: false, detectedDomain: detected_domain }));
+          : { ...t, status: 'done', graphData, summaryData, fromCache: false, detectedDomain: domain }));
       } else {
-        // PDF-only (no analysis cache)
+        // No cache available at all — PDF-only
         setTabs(prev => prev.map(t => t.paper_id !== paper_id ? t
-          : { ...t, status: 'done', graphData: { nodes: {}, edges: [] }, summaryData: null, detectedDomain: detected_domain }));
+          : { ...t, status: 'done', graphData: { nodes: {}, edges: [] }, summaryData: null, detectedDomain: domain }));
       }
     } catch (err) {
       setTabs(prev => prev.map(t => t.paper_id !== paper_id ? t
         : { ...t, status: 'error', error: err.message }));
     }
-  }, [tabs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tabs, startPolling]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePaper = useCallback(async (paperId) => {
     try {
@@ -452,8 +447,24 @@ function AuthenticatedApp({ authUser, onLogout }) {
                     <>
                       <div style={{ display: 'flex', gap: 0, flexShrink: 0 }}>
                         {activePaper.fromCache && (
-                          <div style={{ padding: '4px 16px', background: '#1E3A5F', color: '#93C5FD', fontSize: 11 }}>
-                            ⚡ Loaded {activePaper.paper_id} from cache
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 10,
+                            padding: '6px 14px', background: '#1e3a5f',
+                            borderBottom: '1px solid #2563eb', flexShrink: 0,
+                          }}>
+                            <span style={{ fontSize: 12, color: '#93c5fd' }}>
+                              Showing cached results
+                            </span>
+                            <button
+                              onClick={() => handleRetry(activePaper.paper_id)}
+                              style={{
+                                fontSize: 11, padding: '2px 8px', cursor: 'pointer',
+                                background: '#2563eb', color: '#fff', border: 'none',
+                                borderRadius: 4,
+                              }}
+                            >
+                              Reprocess
+                            </button>
                           </div>
                         )}
                         {activePaper.detectedDomain && (
@@ -463,6 +474,7 @@ function AuthenticatedApp({ authUser, onLogout }) {
                       {Object.keys(activePaper.graphData?.nodes ?? {}).length > 0 && (
                         <KnowledgeGraph
                           graphData={activePaper.graphData}
+                          domain={activePaper.detectedDomain ?? 'math'}
                           sectionPageMap={sectionPageMap}
                           onNodeClick={handleNodeClick}
                         />
@@ -496,9 +508,35 @@ function AuthenticatedApp({ authUser, onLogout }) {
         </>
       )}
 
-      {/* ── Floating Chat (small) ─────────────────────────────────────── */}
-      {chatOpen && !chatExpanded && (
-        <div style={{
+      {/* ── Expanded backdrop (separate so the Chat instance is never unmounted) */}
+      {chatExpanded && (
+        <div
+          onClick={() => setChatExpanded(false)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            zIndex: 1002,
+            backdropFilter: 'blur(2px)',
+          }}
+        />
+      )}
+
+      {/* ── Single Chat instance — container style switches on expand ─── */}
+      {(chatOpen || chatExpanded) && (
+        <div style={chatExpanded ? {
+          position: 'fixed',
+          top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 'min(720px, 90vw)',
+          height: 'min(640px, 85vh)',
+          zIndex: 1003,
+          borderRadius: 16,
+          overflow: 'hidden',
+          boxShadow: '0 20px 80px rgba(0,0,0,0.7)',
+          border: '1px solid #4B5563',
+          display: 'flex',
+          flexDirection: 'column',
+        } : {
           position: 'fixed',
           bottom: 80,
           right: 24,
@@ -520,54 +558,12 @@ function AuthenticatedApp({ authUser, onLogout }) {
             model={resolvedModel}
             apiKey={settings.apiKey}
             readerParams={readerParams}
-            onToggle={() => setChatOpen(false)}
-            onExpand={() => setChatExpanded(true)}
+            onToggle={() => { setChatOpen(false); setChatExpanded(false); }}
+            onExpand={() => setChatExpanded(e => !e)}
             onClear={clearChat}
+            expanded={chatExpanded}
           />
         </div>
-      )}
-
-      {/* ── Expanded Chat modal ───────────────────────────────────────── */}
-      {chatExpanded && (
-        <>
-          <div
-            onClick={() => setChatExpanded(false)}
-            style={{
-              position: 'fixed', inset: 0,
-              background: 'rgba(0,0,0,0.6)',
-              zIndex: 1002,
-              backdropFilter: 'blur(2px)',
-            }}
-          />
-          <div style={{
-            position: 'fixed',
-            top: '50%', left: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: 'min(720px, 90vw)',
-            height: 'min(640px, 85vh)',
-            zIndex: 1003,
-            borderRadius: 16,
-            overflow: 'hidden',
-            boxShadow: '0 20px 80px rgba(0,0,0,0.7)',
-            border: '1px solid #4B5563',
-            display: 'flex',
-            flexDirection: 'column',
-          }}>
-            <Chat
-              chatPaperId={chatPaperId}
-              allPaperIds={donePaperIds}
-              messages={chatMessages}
-              onMessages={setChatMessages}
-              model={resolvedModel}
-              apiKey={settings.apiKey}
-              readerParams={readerParams}
-              onToggle={() => { setChatExpanded(false); setChatOpen(false); }}
-              onExpand={() => setChatExpanded(false)}
-              onClear={clearChat}
-              expanded
-            />
-          </div>
-        </>
       )}
 
       {/* ── FAB toggle ───────────────────────────────────────────────── */}
