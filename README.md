@@ -1,3 +1,13 @@
+---
+title: Research Paper Assistant
+emoji: 📚
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # Research Paper Assistant
 
 Agentic RAG for research papers, with separate pipelines for math-heavy and general content.

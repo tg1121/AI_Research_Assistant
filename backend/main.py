@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 # Make the parent directory importable so existing pipeline code works
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pydantic import BaseModel
 from backend.models import (
     ChatRequest, ChatResponse, LoginRequest, LoginResponse, SignupResponse,
     MarkerDecisionRequest, StatusResponse, UploadResponse,
@@ -196,12 +197,10 @@ def _run_pipeline_sync(
         store.update(paper_id, progress_pct=65, progress_text="2/3 — Synthesis…" if detected_domain == "math" else "2/2 — Synthesis…")
         if detected_domain != "math":
             from pipeline.english_synthesizer import run_english_synthesis
-            from ingestion.english_node_extractor import extract_nodes as eng_nodes
-            doc, doc_map = run_english_synthesis(
+            doc, doc_map, graph = run_english_synthesis(
                 doc, expertise, sci, lang,
                 model=model, api_key=api_key,
             )
-            graph = eng_nodes(doc)  # section graph for chat retrieval
         else:
             doc = run_synthesis(
                 doc, graph, doc_map, expertise, sci, lang,
@@ -253,6 +252,9 @@ def _run_pipeline_sync(
 
 @router.post("/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
+    if os.environ.get("ADMIN_MODE", "").lower() == "true":
+        from backend.auth import ADMIN_USER_ID
+        return LoginResponse(access_token="admin-token", user_id=ADMIN_USER_ID, email=req.email)
     from supabase import create_client as _create_client
     sb = _create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     try:
@@ -268,6 +270,9 @@ async def login(req: LoginRequest):
 
 @router.post("/auth/signup", response_model=SignupResponse)
 async def signup(req: LoginRequest):
+    if os.environ.get("ADMIN_MODE", "").lower() == "true":
+        from backend.auth import ADMIN_USER_ID
+        return SignupResponse(access_token="admin-token", user_id=ADMIN_USER_ID, email=req.email, confirm_email=False)
     from supabase import create_client as _create_client
     sb = _create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_KEY"])
     try:
@@ -305,8 +310,9 @@ async def marker_decision(paper_id: str, req: MarkerDecisionRequest,
 
 @router.get("/providers")
 async def list_providers():
-    """Return the full provider catalogue from llm_client.PROVIDERS."""
+    """Return the provider catalogue. Ollama is excluded on HF Spaces (no local GPU)."""
     from pipeline.llm_client import PROVIDERS
+    is_hf = bool(os.environ.get("SPACE_ID"))
     return [
         {
             "name":          name,
@@ -318,6 +324,7 @@ async def list_providers():
             "models":        info["models"],
         }
         for name, info in PROVIDERS.items()
+        if not (is_hf and info["prefix"] == "ollama")
     ]
 
 
@@ -453,8 +460,15 @@ async def delete_paper(paper_id: str, current_user=Depends(get_current_user)):
     return {"deleted": paper_id}
 
 
+class OpenPaperRequest(BaseModel):
+    model: str = ""
+    api_key: str | None = None
+    reader_expertise: float = 0.0
+    scientific_knowledge: float = 0.0
+    language_complexity: float = 0.0
+
 @router.post("/paper/{paper_id}/open")
-async def open_paper(paper_id: str, current_user=Depends(get_current_user)):
+async def open_paper(paper_id: str, req: OpenPaperRequest = OpenPaperRequest(), current_user=Depends(get_current_user)):
     """
     Register an already-uploaded paper in the in-memory store so its PDF can
     be served and chat works. Tries to restore doc/graph/doc_map from the
@@ -476,7 +490,6 @@ async def open_paper(paper_id: str, current_user=Depends(get_current_user)):
     store.create(paper_id, pdf_path)
 
     from pipeline.output_cache import list_cached_profiles, load_cached
-    from ingestion.english_node_extractor import extract_nodes
     from graph.doc_map import build_english_doc_map
 
     profiles = list_cached_profiles(paper_id)
@@ -505,13 +518,28 @@ async def open_paper(paper_id: str, current_user=Depends(get_current_user)):
             save_graph(paper_id, graph)
         from graph.doc_map import build_doc_map
         doc_map = build_doc_map(graph, paper_id, doc.title)
-    else:
-        graph   = extract_nodes(doc)
-        doc_map = build_english_doc_map(doc, [{} for _ in doc.sections])
+        store.update(paper_id, status="done", doc=doc, graph=graph, doc_map=doc_map,
+                     detected_domain=detected_domain)
+        return {"status": "done", "restored": True, "detected_domain": detected_domain}
 
-    store.update(paper_id, status="done", doc=doc, graph=graph, doc_map=doc_map,
-                 detected_domain=detected_domain)
-    return {"status": "done", "restored": True, "detected_domain": detected_domain}
+    # Non-math: re-run the synthesis pipeline so the graph is rebuilt correctly.
+    # Use the model/key/profile the user has currently selected in the sidebar.
+    model = req.model or "openrouter/openai/gpt-oss-120b:free"
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        _executor,
+        _run_pipeline_sync,
+        paper_id, pdf_path,
+        model,
+        req.api_key or None,
+        req.reader_expertise,
+        req.scientific_knowledge,
+        req.language_complexity,
+        None,   # datalab_key
+        detected_domain,
+        str(current_user.id),
+    )
+    return {"status": "processing", "restored": False, "detected_domain": detected_domain}
 
 
 @router.get("/paper/{paper_id}/status", response_model=StatusResponse)
@@ -534,6 +562,13 @@ async def get_pdf(paper_id: str, token: str = "", current_user=None):
     # PDF is loaded directly by the browser so we accept token as a query param
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
+
+    if os.environ.get("ADMIN_MODE", "").lower() == "true":
+        pdf_path = f"uploads/{paper_id}.pdf"
+        if not os.path.exists(pdf_path):
+            raise HTTPException(404, "PDF file not found on disk")
+        return FileResponse(pdf_path, media_type="application/pdf")
+
     from backend.auth import _supabase
     try:
         resp = _supabase().auth.get_user(token)
@@ -543,12 +578,6 @@ async def get_pdf(paper_id: str, token: str = "", current_user=None):
         raise
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
-
-    if os.environ.get("ADMIN_MODE", "").lower() == "true":
-        pdf_path = f"uploads/{paper_id}.pdf"
-        if not os.path.exists(pdf_path):
-            raise HTTPException(404, "PDF file not found on disk")
-        return FileResponse(pdf_path, media_type="application/pdf")
 
     user_id = str(resp.user.id)
     signed_url = storage.get_signed_url(user_id, paper_id)
@@ -565,8 +594,8 @@ async def get_graph(paper_id: str, current_user=Depends(get_current_user)):
         raise HTTPException(404, "Paper not found")
     if state.status != "done":
         raise HTTPException(409, f"Pipeline not complete (status={state.status})")
-    if state.detected_domain != "math":
-        return {"nodes": [], "edges": []}
+    if state.graph is None:
+        return {"nodes": {}, "edges": []}
     return state.graph.to_dict()
 
 
@@ -649,6 +678,7 @@ async def chat(paper_id: str, req: ChatRequest, current_user=Depends(get_current
                 model=model,
                 api_key=req.api_key,
                 turn_counter=state.turn_counter,
+                user_id=str(current_user.id),
             ),
         )
     except InvalidAPIKeyError as exc:

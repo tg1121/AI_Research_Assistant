@@ -3,6 +3,7 @@ Unified LLM client using LiteLLM.
 Model string format: "provider/model-name" e.g. "groq/llama-3.3-70b-versatile"
 """
 
+import json
 import os
 import requests
 import litellm
@@ -15,17 +16,9 @@ litellm._turn_on_debug()
 # ── provider catalogue ────────────────────────────────────────────────
 
 PROVIDERS = {
-    "OpenRouter (free models)": {
-        "prefix":       "openrouter",
-        "default_model":"openai/gpt-oss-120b:free",
-        "env_var":      "OPENROUTER_API_KEY",
-        "key_hint":     "sk-or-...",
-        "notes":        "One key routes to GPT, Claude, Gemini, Llama and more. Append :free for free-tier models.",
-        "models": [],   # populated dynamically from OpenRouter API
-    },
     "Ollama (local)": {
         "prefix":       "ollama",
-        "default_model":"ollama/llama3.2",
+        "default_model":"ollama/qwen2.5:14b",
         "env_var":      "",
         "key_hint":     "(no key needed)",
         "notes":        "Runs locally via Ollama. Start with: ollama serve",
@@ -39,6 +32,14 @@ PROVIDERS = {
             "ollama/deepseek-r1:8b",
             "ollama/phi4",
         ],
+    },
+    "OpenRouter (free models)": {
+        "prefix":       "openrouter",
+        "default_model":"openai/gpt-oss-120b:free",
+        "env_var":      "OPENROUTER_API_KEY",
+        "key_hint":     "sk-or-...",
+        "notes":        "One key routes to GPT, Claude, Gemini, Llama and more. Append :free for free-tier models.",
+        "models": [],   # populated dynamically from OpenRouter API
     },
     "Google Gemini": {
         "prefix":       "gemini",
@@ -350,14 +351,73 @@ def clean_json(raw: str | None, context: str = "") -> str:
     return raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
 
 
+_PROVIDER_ENV: dict[str, str] = {
+    "openai":      "OPENAI_API_KEY",
+    "anthropic":   "ANTHROPIC_API_KEY",
+    "groq":        "GROQ_API_KEY",
+    "gemini":      "GEMINI_API_KEY",
+    "openrouter":  "OPENROUTER_API_KEY",
+    "mistral":     "MISTRAL_API_KEY",
+}
+
+
+def _check_ollama_model(model: str) -> None:
+    """Raise a clear error if the requested Ollama model isn't pulled locally."""
+    import urllib.request, urllib.error
+    model_name = model.removeprefix("ollama/")
+    try:
+        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as r:
+            import json as _json
+            data = _json.loads(r.read())
+        installed = [m.get("name", "") for m in data.get("models", [])]
+        # match loosely: "qwen2.5:14b" matches "qwen2.5:14b" or "qwen2.5"
+        base = model_name.split(":")[0]
+        if not any(n == model_name or n.startswith(base) for n in installed):
+            pull_cmd = f"ollama pull {model_name}"
+            raise RuntimeError(
+                f"Ollama model '{model_name}' is not installed locally. "
+                f"Run `{pull_cmd}` to download it, or switch to a different provider."
+            )
+    except urllib.error.URLError:
+        raise RuntimeError(
+            "Ollama is not running. Start it with `ollama serve`, "
+            "or switch to a cloud provider (OpenRouter, Gemini, Groq, etc.)."
+        )
+
+
+def _llm_call_hf_space(messages: list, max_tokens: int) -> str:
+    """Call the Qwen 2.5 14B ZeroGPU Gradio Space via its REST API."""
+    space_url = os.environ.get("HF_SPACE_URL", "").rstrip("/")
+    if not space_url:
+        raise RuntimeError(
+            "HF_SPACE_URL env var is not set. "
+            "Deploy qwen_space/ to HuggingFace and set HF_SPACE_URL=https://your-space.hf.space"
+        )
+    resp = requests.post(
+        f"{space_url}/api/predict",
+        json={"data": [json.dumps(messages), max_tokens]},
+        timeout=360,
+    )
+    resp.raise_for_status()
+    data = resp.json().get("data", [])
+    if not data:
+        raise ValueError("HF Space returned empty response")
+    return data[0]
+
+
 def llm_call(messages: list,
              model: str,
              api_key: str | None = None,
              max_tokens: int = 1024) -> str:
     """
-    Make a chat completion call via LiteLLM.
+    Make a chat completion call via LiteLLM (or HF Space for hf_space/ prefix).
     model and api_key are passed explicitly — no hidden global state.
+    Key resolution order: explicit arg → provider-specific env var.
+    Never falls back to OPENAI_API_KEY for non-OpenAI providers.
     """
+    if model.startswith("hf_space/"):
+        return _llm_call_hf_space(messages, max_tokens)
+
     try:
         kwargs = dict(
             model=model,
@@ -365,10 +425,13 @@ def llm_call(messages: list,
             temperature=0,
             max_tokens=max_tokens,
         )
-        if api_key:
-            kwargs["api_key"] = api_key
+        prefix = model.split("/")[0] if "/" in model else "openai"
+        resolved_key = api_key or os.environ.get(_PROVIDER_ENV.get(prefix, ""), "")
+        if resolved_key:
+            kwargs["api_key"] = resolved_key
         if model.startswith("ollama/"):
             kwargs["api_base"] = "http://localhost:11434"
+            _check_ollama_model(model)
 
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
