@@ -1,8 +1,9 @@
 """
-MathGraph — core data structure for V8.
+Graph — core data structure.
 
-Every theorem, lemma, definition, corollary, proof, and section
-becomes a node. Every cross-reference becomes a directed edge.
+Every theorem, lemma, definition, corollary, proof, section, claim,
+concept, and evidence node becomes a Node. Every cross-reference becomes
+a directed Edge.
 
 Node importance = in-degree (how many other nodes reference this one).
 Proof nodes additionally carry proof_type:
@@ -35,7 +36,7 @@ PROOF_TYPES = {"direct", "induction", "contradiction"}
 
 
 @dataclass
-class MathNode:
+class Node:
     node_id: str         # e.g. "thm_5", "def_lebesgue", "s2"
     label: str           # display label e.g. "Theorem 5"
     node_type: str       # one of NODE_TYPES
@@ -49,7 +50,7 @@ class MathNode:
 
 
 @dataclass
-class MathEdge:
+class Edge:
     from_id: str
     to_id: str
     source: str          # "regex" | "positional" | "llm"
@@ -57,7 +58,7 @@ class MathEdge:
     confidence: str = "certain"  # "certain" | "inferred"
 
 
-class MathGraph:
+class Graph:
     """
     Holds all nodes and edges for one paper.
     Wraps networkx DiGraph when available, falls back to
@@ -65,17 +66,16 @@ class MathGraph:
     """
 
     def __init__(self):
-        self.nodes: dict[str, MathNode] = {}
-        self.edges: list[MathEdge] = []
+        self.nodes: dict[str, Node] = {}
+        self.edges: list[Edge] = []
         self._graph = nx.DiGraph() if _NX else None
         self._ordered_node_ids: list[str] = []
-        # populated by node_extractor, used by edge_extractor
         self._label_index: dict[str, str] = {}   # "theorem 5" → "thm_5"
         self._number_index: dict[str, str] = {}  # "thm_5" → node_id
 
     # ── building ──────────────────────────────────────────────────────
 
-    def add_node(self, node: MathNode):
+    def add_node(self, node: Node):
         self.nodes[node.node_id] = node
         if _NX:
             self._graph.add_node(node.node_id,
@@ -83,7 +83,7 @@ class MathGraph:
                 section_id=node.section_id, position=node.position,
                 proof_type=node.proof_type)
 
-    def add_edge(self, edge: MathEdge):
+    def add_edge(self, edge: Edge):
         if edge.from_id not in self.nodes or edge.to_id not in self.nodes:
             return
         if edge.from_id == edge.to_id:
@@ -110,7 +110,7 @@ class MathGraph:
 
     # ── queries ───────────────────────────────────────────────────────
 
-    def get_ancestors(self, node_id: str, max_depth: int = 3) -> list[MathNode]:
+    def get_ancestors(self, node_id: str, max_depth: int = 3) -> list[Node]:
         """Nodes this node depends on — walk edges backwards."""
         if not _NX or node_id not in self._graph:
             return []
@@ -127,7 +127,7 @@ class MathGraph:
             depth += 1
         return result
 
-    def get_dependents(self, node_id: str) -> list[MathNode]:
+    def get_dependents(self, node_id: str) -> list[Node]:
         """Nodes that reference this node."""
         if not _NX or node_id not in self._graph:
             return []
@@ -157,21 +157,20 @@ class MathGraph:
                 seen.append(node.section_id)
         return seen
 
-    def nodes_by_importance(self) -> list[MathNode]:
+    def nodes_by_importance(self) -> list[Node]:
         return sorted(self.nodes.values(), key=lambda n: n.in_degree, reverse=True)
 
-    def section_nodes(self) -> list[MathNode]:
+    def section_nodes(self) -> list[Node]:
         return [self.nodes[nid] for nid in self._ordered_node_ids
                 if nid in self.nodes and self.nodes[nid].node_type == "section"]
 
-    def nodes_in_section(self, section_id: str) -> list[MathNode]:
+    def nodes_in_section(self, section_id: str) -> list[Node]:
         return [self.nodes[nid] for nid in self._ordered_node_ids
                 if nid in self.nodes
                 and self.nodes[nid].section_id == section_id
                 and self.nodes[nid].node_type != "section"]
 
-    def proof_nodes(self) -> list[MathNode]:
-        """All proof nodes, with their proof_type."""
+    def proof_nodes(self) -> list[Node]:
         return [n for n in self.nodes.values() if n.node_type == "proof"]
 
     # ── serialization ─────────────────────────────────────────────────
@@ -193,10 +192,10 @@ class MathGraph:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "MathGraph":
+    def from_dict(cls, data: dict) -> "Graph":
         g = cls()
         for nd in data.get("nodes", {}).values():
-            g.add_node(MathNode(
+            g.add_node(Node(
                 node_id=nd["node_id"], label=nd["label"],
                 node_type=nd["node_type"], section_id=nd["section_id"],
                 raw_text=nd.get("raw_text", ""), raw_latex=nd.get("raw_latex", ""),
@@ -204,7 +203,7 @@ class MathGraph:
                 proof_type=nd.get("proof_type"), qa=nd.get("qa"),
             ))
         for ed in data.get("edges", []):
-            g.add_edge(MathEdge(
+            g.add_edge(Edge(
                 from_id=ed["from_id"], to_id=ed["to_id"],
                 source=ed["source"], evidence=ed.get("evidence", ""),
                 confidence=ed.get("confidence", "certain"),
@@ -217,5 +216,11 @@ class MathGraph:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
     @classmethod
-    def from_json(cls, s: str) -> "MathGraph":
+    def from_json(cls, s: str) -> "Graph":
         return cls.from_dict(json.loads(s))
+
+
+# backward-compat aliases — remove once all callers updated
+MathGraph = Graph
+MathNode = Node
+MathEdge = Edge

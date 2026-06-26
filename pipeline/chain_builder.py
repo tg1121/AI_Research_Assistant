@@ -5,7 +5,7 @@ from ingestion.equation_extractor import extract_equations
 from pipeline.llm_client import llm_call, clean_json
 
 def run_chain_builder(doc: Document,
-                      model: str = "groq/llama-3.3-70b-versatile",
+                      model: str = "openrouter/openai/gpt-oss-120b:free",
                       api_key: str | None = None) -> Document:
     all_equations = extract_equations(doc.raw_markdown)
 

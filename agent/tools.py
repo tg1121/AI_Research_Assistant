@@ -19,7 +19,7 @@ Agent tools — retrieval functions the ReAct planner calls.
 """
 
 import re
-from graph.math_graph import MathGraph, MathNode
+from graph.math_graph import Graph, Node
 from graph.doc_map import DocMap
 
 _MAX_NODE_CHARS = 400
@@ -59,7 +59,7 @@ def _sample_section(text: str) -> str:
     return f"{start}\n[...]\n{middle}\n[...]\n{end}"
 
 
-def retrieve_section(graph: MathGraph, section_id: str) -> str:
+def retrieve_section(graph: Graph, section_id: str) -> str:
     node = graph.nodes.get(section_id)
     if not node:
         return f"[Section '{section_id}' not found]"
@@ -83,7 +83,7 @@ def retrieve_section(graph: MathGraph, section_id: str) -> str:
 
 # ── Tool 3 ────────────────────────────────────────────────────────────
 
-def follow_reference(graph: MathGraph, node_id: str, depth: int = 2) -> str:
+def follow_reference(graph: Graph, node_id: str, depth: int = 2) -> str:
     node = graph.nodes.get(node_id)
     if not node:
         # try label resolution
@@ -125,12 +125,12 @@ def follow_reference(graph: MathGraph, node_id: str, depth: int = 2) -> str:
 
 # ── Tool 4 ────────────────────────────────────────────────────────────
 
-def search_concept(graph: MathGraph, query: str, top_k: int = 4) -> str:
+def search_concept(graph: Graph, query: str, top_k: int = 4) -> str:
     q_tokens = set(_tokenise(query))
     if not q_tokens:
         return "[Empty query]"
 
-    scored: list[tuple[float, MathNode]] = []
+    scored: list[tuple[float, Node]] = []
     for node in graph.nodes.values():
         text = f"{node.label} {node.raw_text} {node.raw_latex}".lower()
         overlap = len(q_tokens & set(_tokenise(text)))
@@ -163,7 +163,7 @@ def _tokenise(text: str) -> list[str]:
             if t not in _STOPWORDS and len(t) > 2]
 
 
-def _resolve_label(graph: MathGraph, query: str) -> str | None:
+def _resolve_label(graph: Graph, query: str) -> str | None:
     q = query.lower().strip()
     if q in graph._label_index:
         return graph._label_index[q]

@@ -5,12 +5,12 @@ Key optimisations vs original:
   - Tool results NOT accumulated in message history (saves re-sending on each iteration)
   - Doc map sent once in system prompt, not repeated in user seed
   - Planner max_tokens capped at 100 (only needs TOOL/ARGS/ANSWER lines)
-  - Tool result capped before feeding back (2000 → 800 chars)
+  - Tool result sampled start/middle/end before feeding back (budget=800 chars)
 """
 
 import re
 from pipeline.llm_client import llm_call
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 from graph.doc_map import DocMap
 from agent.tools import (
     consult_doc_map, retrieve_section,
@@ -18,6 +18,23 @@ from agent.tools import (
 )
 
 MAX_ITERATIONS = 4
+
+
+def _sample_result(text: str, budget: int = 800) -> str:
+    """Sample start/middle/end of a tool result to fit within budget chars."""
+    text = text.strip()
+    if len(text) <= budget:
+        return text
+    chunk = budget // 3
+    mid_s = (len(text) - chunk) // 2
+    return (
+        text[:chunk]
+        + "\n[...]\n"
+        + text[mid_s:mid_s + chunk]
+        + "\n[...]\n"
+        + text[-chunk:]
+    )
+
 
 def _build_system(doc_map: DocMap) -> str:
     doc_map_block = consult_doc_map(doc_map)
@@ -45,7 +62,7 @@ def _parse_tool_call(text: str) -> tuple[str, str] | None:
     return None
 
 
-def _execute(tool: str, args: str, graph: MathGraph, doc_map: DocMap) -> str:
+def _execute(tool: str, args: str, graph: Graph, doc_map: DocMap) -> str:
     if tool == "consult_doc_map":
         return consult_doc_map(doc_map)
     if tool == "retrieve_section":
@@ -59,7 +76,7 @@ def _execute(tool: str, args: str, graph: MathGraph, doc_map: DocMap) -> str:
 
 def plan_and_retrieve(
     question: str,
-    graph: MathGraph,
+    graph: Graph,
     doc_map: DocMap,
     model: str,
     api_key: str | None,
@@ -82,7 +99,7 @@ def plan_and_retrieve(
         else:
             user_content = (
                 f"Question: {question}\n\n"
-                f"Last tool result (truncated):\n{last_result[:800]}\n\n"
+                f"Last tool result (truncated):\n{_sample_result(last_result)}\n\n"
                 f"Call another tool or say ANSWER: ready."
             )
 

@@ -2,19 +2,16 @@ import { useState } from 'react';
 import Md from './Md';
 
 const QUESTIONS = [
-  ['Q1_problem',      '❓ What was broken?'],
-  ['Q2_insight',      '💡 Key insight?'],
-  ['Q3_mechanism',    '⚙️ How does it work?'],
-  ['Q4_evidence',     '✅ Does it work?'],
-  ['Q5_assumptions',  '🔍 Assumptions?'],
-  ['Q6_implications', '🌐 Implications?'],
-  ['Q7_limitations',  '⚠️ Limitations?'],
+  ['Q1_problem',     '❓ Problem?'],
+  ['Q2_insight',     '💡 Insight?'],
+  ['Q3_mechanism',   '⚙️ Mechanism?'],
+  ['Q7_limitations', '⚠️ Limitations?'],
 ];
 
 export default function Summary({ summaryData }) {
   const [collapsed, setCollapsed] = useState(false);
   const [arcsOpen, setArcsOpen] = useState(false);
-  const [qsOpen, setQsOpen] = useState(true);
+  const [qsOpen, setQsOpen] = useState(false);
   const [chainOpen, setChainOpen] = useState(false);
 
   if (!summaryData?.holistic_summary) return null;

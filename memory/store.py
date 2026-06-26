@@ -6,8 +6,11 @@ Two tables:
                   conversation summaries (compressed sliding window)
   memory_user   — expertise signals and style preferences (cross-paper)
 
-Raw chat messages are NEVER stored here. The in-session message list
-lives in st.session_state. Only distilled knowledge lands in Supabase.
+Both tables are scoped by user_id. Run the migration in Supabase once:
+  ALTER TABLE memory_paper ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES auth.users(id);
+  ALTER TABLE memory_user  ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES auth.users(id);
+
+Raw chat messages are NEVER stored here — only distilled knowledge lands here.
 """
 
 import os
@@ -30,32 +33,35 @@ def _db():
 
 PAPER_TYPES = {"correction", "self_revision", "established_fact", "conversation_summary"}
 
-def save_paper_memory(paper_id: str, type_: str, content: str,
+def save_paper_memory(paper_id: str, user_id: str, type_: str, content: str,
                       turn_range: str | None = None) -> dict:
-    """Write one distilled memory item for a specific paper."""
     assert type_ in PAPER_TYPES, f"Unknown paper memory type: {type_!r}"
-    row = {"paper_id": paper_id, "type": type_, "content": content}
+    row = {"paper_id": paper_id, "user_id": user_id, "type": type_, "content": content}
     if turn_range:
         row["turn_range"] = turn_range
     result = _db().table("memory_paper").insert(row).execute()
     return result.data[0]
 
 
-def load_paper_memory(paper_id: str) -> list[dict]:
-    """Load all memory for a paper, ordered oldest-first."""
+def load_paper_memory(paper_id: str, user_id: str) -> list[dict]:
     result = (
         _db().table("memory_paper")
         .select("*")
         .eq("paper_id", paper_id)
+        .eq("user_id", user_id)
         .order("created_at", desc=False)
         .execute()
     )
     return result.data or []
 
 
-def delete_paper_memory(paper_id: str, type_: str | None = None):
-    """Delete memory for a paper. Optionally filter by type."""
-    q = _db().table("memory_paper").delete().eq("paper_id", paper_id)
+def delete_paper_memory(paper_id: str, user_id: str, type_: str | None = None):
+    q = (
+        _db().table("memory_paper")
+        .delete()
+        .eq("paper_id", paper_id)
+        .eq("user_id", user_id)
+    )
     if type_:
         q = q.eq("type", type_)
     q.execute()
@@ -65,20 +71,19 @@ def delete_paper_memory(paper_id: str, type_: str | None = None):
 
 USER_TYPES = {"expertise_signal", "style_preference"}
 
-def save_user_memory(type_: str, content: str) -> dict:
-    """Write one global user memory item."""
+def save_user_memory(user_id: str, type_: str, content: str) -> dict:
     assert type_ in USER_TYPES, f"Unknown user memory type: {type_!r}"
     result = _db().table("memory_user").insert(
-        {"type": type_, "content": content}
+        {"user_id": user_id, "type": type_, "content": content}
     ).execute()
     return result.data[0]
 
 
-def load_user_memory() -> list[dict]:
-    """Load all global user memory, ordered oldest-first."""
+def load_user_memory(user_id: str) -> list[dict]:
     result = (
         _db().table("memory_user")
         .select("*")
+        .eq("user_id", user_id)
         .order("created_at", desc=False)
         .execute()
     )
@@ -87,14 +92,10 @@ def load_user_memory() -> list[dict]:
 
 # ── context builder ───────────────────────────────────────────────────
 
-def build_memory_context(paper_id: str) -> str:
-    """
-    Assemble all persisted memory into a single context block
-    to inject at the top of the chat system prompt.
-    Returns empty string if no memory exists yet.
-    """
-    user_rows  = load_user_memory()
-    paper_rows = load_paper_memory(paper_id)
+def build_memory_context(paper_id: str, user_id: str) -> str:
+    """Assemble persisted memory for this user+paper into a system prompt block."""
+    user_rows  = load_user_memory(user_id)
+    paper_rows = load_paper_memory(paper_id, user_id)
 
     if not user_rows and not paper_rows:
         return ""

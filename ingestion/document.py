@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from graph.math_graph import MathGraph
+    from graph.math_graph import Graph
 
 class Equation(BaseModel):
     raw_latex: str
@@ -28,5 +28,5 @@ class Document(BaseModel):
     mathematical_chain: Optional[dict] = None
     holistic_summary: Optional[dict] = None
     # V8: graph stored as plain dict for pydantic serialization
-    # access via graph_store.load_graph(paper_id) for the real MathGraph object
+    # access via graph_store.load_graph(paper_id) for the real Graph object
     graph_meta: Optional[dict] = None

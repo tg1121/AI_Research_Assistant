@@ -3,15 +3,15 @@ English node extractor — section-only graph for English/humanities papers.
 No LLM calls; all LLM work is handled by english_synthesizer in a single call.
 """
 from ingestion.document import Document
-from graph.math_graph import MathGraph, MathNode
+from graph.math_graph import Graph, Node
 
 
-def extract_nodes(doc: Document, **_kwargs) -> MathGraph:
-    graph = MathGraph()
+def extract_nodes(doc: Document, **_kwargs) -> Graph:
+    graph = Graph()
     ordered_ids: list[str] = []
 
     for position, section in enumerate(doc.sections):
-        graph.add_node(MathNode(
+        graph.add_node(Node(
             node_id=section.section_id,
             label=section.title,
             node_type="section",

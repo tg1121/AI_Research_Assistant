@@ -1,5 +1,5 @@
 """
-Node extractor — scans sections and creates MathGraph nodes.
+Node extractor — scans sections and creates Graph nodes.
 
 Creates:
   1. One 'section' node per section
@@ -26,7 +26,7 @@ All detection is mechanical (regex). No LLM calls.
 
 import re
 from ingestion.document import Document
-from graph.math_graph import MathGraph, MathNode
+from graph.math_graph import Graph, Node
 
 # ── math object label pattern ─────────────────────────────────────────
 
@@ -137,20 +137,20 @@ def _assign_positional_numbers(raw_items: list[dict]) -> list[dict]:
 
 # ── main ──────────────────────────────────────────────────────────────
 
-def extract_nodes(doc: Document) -> MathGraph:
+def extract_nodes(doc: Document) -> Graph:
     """
-    Scan all sections and return a MathGraph with nodes only.
+    Scan all sections and return a Graph with nodes only.
     Unnumbered math objects are assigned positional numbers.
     Edges are added separately by edge_extractor.
     """
-    graph = MathGraph()
+    graph = Graph()
     position = 0
     ordered_ids: list[str] = []
 
     for section in doc.sections:
 
         # 1. section node
-        graph.add_node(MathNode(
+        graph.add_node(Node(
             node_id=section.section_id,
             label=section.title,
             node_type="section",
@@ -197,7 +197,7 @@ def extract_nodes(doc: Document) -> MathGraph:
             ntype      = _node_type(keyword)
             proof_type = _classify_proof_type(excerpt) if ntype == "proof" else None
 
-            graph.add_node(MathNode(
+            graph.add_node(Node(
                 node_id=node_id,
                 label=label,
                 node_type=ntype,
@@ -234,7 +234,7 @@ def extract_nodes(doc: Document) -> MathGraph:
             if node_id in graph.nodes:
                 continue
 
-            graph.add_node(MathNode(
+            graph.add_node(Node(
                 node_id=node_id,
                 label=f"Equation ({tag})",
                 node_type="equation",

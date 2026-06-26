@@ -12,7 +12,7 @@ Pass 3 — Section membership (same as math):
 """
 import re
 import json
-from graph.math_graph import MathGraph, MathEdge, MathNode
+from graph.math_graph import Graph, Edge, Node
 
 _APA_CITE = re.compile(
     r'\((?:[A-Z][a-z]+(?:\s+(?:et\s+al\.|and|&)\s+[A-Z][a-z]+)?),?\s+\d{4}[a-z]?\)'
@@ -75,13 +75,13 @@ def _llm_edges_for_section(sec_nodes: list, model: str, api_key) -> list[dict]:
         return []
 
 
-def extract_edges(graph: MathGraph, model: str, api_key=None) -> MathGraph:
+def extract_edges(graph: Graph, model: str, api_key=None) -> Graph:
     nodes = graph.nodes
 
     # ── Pass 1: citation regex → External References node ────────────
     ext_id = "external_refs"
     if ext_id not in nodes:
-        graph.add_node(MathNode(
+        graph.add_node(Node(
             node_id=ext_id,
             label="External References",
             node_type="external",
@@ -94,7 +94,7 @@ def extract_edges(graph: MathGraph, model: str, api_key=None) -> MathGraph:
         if node.node_id == ext_id or node.node_type in {"section", "external"}:
             continue
         if _APA_CITE.search(node.raw_text or ""):
-            graph.add_edge(MathEdge(
+            graph.add_edge(Edge(
                 from_id=node.node_id,
                 to_id=ext_id,
                 source="regex",
@@ -116,7 +116,7 @@ def extract_edges(graph: MathGraph, model: str, api_key=None) -> MathGraph:
             etype    = e.get("type", "")
             evidence = e.get("evidence", "")
             if from_id in nodes and to_id in nodes and etype in EDGE_TYPES:
-                graph.add_edge(MathEdge(
+                graph.add_edge(Edge(
                     from_id=from_id,
                     to_id=to_id,
                     source="llm",
@@ -129,7 +129,7 @@ def extract_edges(graph: MathGraph, model: str, api_key=None) -> MathGraph:
         if node.node_type in {"section", "external"}:
             continue
         if node.section_id in nodes:
-            graph.add_edge(MathEdge(
+            graph.add_edge(Edge(
                 from_id=node.node_id,
                 to_id=node.section_id,
                 source="section",

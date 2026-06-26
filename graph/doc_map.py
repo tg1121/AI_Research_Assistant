@@ -1,5 +1,5 @@
 """
-DocMap — lightweight structural index built from the MathGraph.
+DocMap — lightweight structural index built from the Graph.
 
 The agent reads this first for every question (~300 tokens).
 Answers structural questions with zero retrieval:
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 import json
 
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 
 
 @dataclass
@@ -124,16 +124,16 @@ class DocMap:
 def build_english_doc_map(doc, section_data: list[dict]) -> "DocMap":
     """
     Build DocMap for non-math papers from section keyword data.
-    importance = keyword richness (TF-IDF keyword count)
-    math_object_count repurposed as named concept count
+    section_data already excludes bibliography sections.
+    importance = keyword richness; math_object_count = named concept count.
     """
     sections = []
-    for s_doc, s_data in zip(doc.sections, section_data):
+    for s in section_data:
         sections.append(SectionEntry(
-            section_id=s_doc.section_id,
-            title=s_doc.title,
-            importance=len(s_data.get("keywords", [])),
-            math_object_count=len(s_data.get("named_phrases", [])),
+            section_id=s["section_id"],
+            title=s["title"],
+            importance=len(s.get("keywords", [])),
+            math_object_count=len(s.get("named_phrases", [])),
             proof_count=0,
             depends_on=[],
             referenced_by=[],
@@ -143,14 +143,14 @@ def build_english_doc_map(doc, section_data: list[dict]) -> "DocMap":
         paper_title=doc.title,
         sections=sections,
         top_nodes=[],
-        total_nodes=len(doc.sections),
+        total_nodes=len(sections),
         total_edges=0,
         dominant_type="prose-heavy",
     )
 
 
-def build_doc_map(graph: MathGraph, paper_id: str, paper_title: str) -> DocMap:
-    """Build DocMap from a finalized MathGraph. No LLM calls."""
+def build_doc_map(graph: Graph, paper_id: str, paper_title: str) -> DocMap:
+    """Build DocMap from a finalized Graph. No LLM calls."""
 
     # inter-section dependency sets
     sec_depends_on: dict[str, set[str]] = {}

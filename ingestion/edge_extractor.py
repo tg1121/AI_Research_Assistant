@@ -20,7 +20,7 @@ Pass 3 — Section membership:
 """
 
 import re
-from graph.math_graph import MathGraph, MathEdge
+from graph.math_graph import Graph, Edge
 
 _KEYWORDS = (
     "theorem", "lemma", "definition", "proposition", "corollary",
@@ -68,7 +68,7 @@ def _resolve_positional(pos, direction, count, type_filter, ordered_ids, nodes):
     return results
 
 
-def extract_edges(graph: MathGraph) -> MathGraph:
+def extract_edges(graph: Graph) -> Graph:
     ordered_ids  = graph._ordered_node_ids
     nodes        = graph.nodes
     number_index = getattr(graph, "_number_index", {})
@@ -87,7 +87,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
                     tid = (number_index.get(f"{kw}_{number}") or
                            number_index.get(f"{kw}_{number.replace('.','_')}"))
                     if tid and tid != node.node_id:
-                        graph.add_edge(MathEdge(
+                        graph.add_edge(Edge(
                             from_id=node.node_id, to_id=tid,
                             source="regex", evidence=m.group(0),
                             confidence="certain"))
@@ -96,7 +96,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         for m in _EQ_REF.finditer(text):
             tid = number_index.get(f"eq_{m.group(1)}")
             if tid and tid != node.node_id:
-                graph.add_edge(MathEdge(
+                graph.add_edge(Edge(
                     from_id=node.node_id, to_id=tid,
                     source="regex", evidence=m.group(0),
                     confidence="certain"))
@@ -108,7 +108,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
             for tid in _resolve_positional(pos, direction, count,
                                            type_filter, ordered_ids, nodes):
                 if tid != node.node_id:
-                    graph.add_edge(MathEdge(
+                    graph.add_edge(Edge(
                         from_id=node.node_id, to_id=tid,
                         source="positional", evidence=pattern.pattern,
                         confidence="certain"))
@@ -118,7 +118,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         if node.node_type == "section":
             continue
         if node.section_id in nodes:
-            graph.add_edge(MathEdge(
+            graph.add_edge(Edge(
                 from_id=node.node_id,
                 to_id=node.section_id,
                 source="section",
@@ -136,10 +136,10 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         re.IGNORECASE,
     )
     # Add the external references node
-    from graph.math_graph import MathNode
+    from graph.math_graph import Node
     ext_id = "external_refs"
     if ext_id not in nodes:
-        graph.add_node(MathNode(
+        graph.add_node(Node(
             node_id=ext_id,
             label="External References",
             node_type="section",
@@ -152,7 +152,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         if node.node_id == ext_id:
             continue
         if _EXTERNAL_PATTERN.search(node.raw_text or ""):
-            graph.add_edge(MathEdge(
+            graph.add_edge(Edge(
                 from_id=node.node_id,
                 to_id=ext_id,
                 source="regex",
@@ -169,10 +169,10 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         r'exercise|see page|pp\.\s*\d+|ibid)\b',
         re.IGNORECASE,
     )
-    from graph.math_graph import MathNode
+    from graph.math_graph import Node
     ext_id = "external_refs"
     if ext_id not in nodes:
-        graph.add_node(MathNode(
+        graph.add_node(Node(
             node_id=ext_id,
             label="External References",
             node_type="external",
@@ -185,7 +185,7 @@ def extract_edges(graph: MathGraph) -> MathGraph:
         if node.node_id == ext_id or node.node_type == "section":
             continue
         if _EXT_PATTERN.search(node.raw_text or ""):
-            graph.add_edge(MathEdge(
+            graph.add_edge(Edge(
                 from_id=node.node_id,
                 to_id=ext_id,
                 source="regex",

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 const NODE_COLORS = {
+  // math
   definition:   '#7F77DD',
   theorem:      '#1D9E75',
   lemma:        '#BA7517',
@@ -11,17 +12,24 @@ const NODE_COLORS = {
   equation:     '#44AADD',
   remark:       '#aaaaaa',
   example:      '#BA7517',
+  // english
+  claim:        '#E879A0',
+  concept:      '#A78BFA',
+  evidence:     '#34D399',
+  critic_view:  '#FB923C',
+  primary_text: '#60A5FA',
+  // shared
   external:     '#FF8C00',
 };
 
 const EDGE_COLORS = {
   regex:      '#1D9E75',
   positional: '#BA7517',
-  llm:        '#D85A30',
+  llm:        '#A78BFA',
   section:    '#223355',
 };
 
-const LEGEND = [
+const MATH_LEGEND = [
   { color: '#7F77DD', label: 'Definition' },
   { color: '#1D9E75', label: 'Theorem/Prop' },
   { color: '#BA7517', label: 'Lemma' },
@@ -30,7 +38,17 @@ const LEGEND = [
   { color: '#378ADD', label: 'Section' },
 ];
 
-export default function KnowledgeGraph({ graphData, sectionPageMap = {}, onNodeClick }) {
+const ENGLISH_LEGEND = [
+  { color: '#378ADD', label: 'Section' },
+  { color: '#E879A0', label: 'Claim' },
+  { color: '#A78BFA', label: 'Concept' },
+  { color: '#34D399', label: 'Evidence' },
+  { color: '#FB923C', label: 'Critic view' },
+  { color: '#60A5FA', label: 'Primary text' },
+  { color: '#FF8C00', label: 'External refs' },
+];
+
+export default function KnowledgeGraph({ graphData, domain = 'math', sectionPageMap = {}, onNodeClick }) {
   const [collapsed, setCollapsed]     = useState(false);
   const [hoveredNode, setHoveredNode] = useState(null);
   const [mousePos, setMousePos]       = useState({ x: 0, y: 0 });
@@ -71,10 +89,10 @@ export default function KnowledgeGraph({ graphData, sectionPageMap = {}, onNodeC
               id:    i,
               from:  e.from_id,
               to:    e.to_id,
-              color: { color: EDGE_COLORS[e.source] || '#aaa', opacity: isSection ? 0.25 : 0.85 },
-              arrows: isSection ? '' : 'to',
-              dashes: e.source === 'llm' ? true : isSection ? [2, 6] : false,
-              width:  isSection ? 0.8 : 1.5,
+              color: { color: EDGE_COLORS[e.source] || '#aaa', opacity: isSection ? 0.45 : 0.85 },
+              arrows: isSection ? 'to' : 'to',
+              dashes: e.source === 'llm' ? true : isSection ? [4, 4] : false,
+              width:  isSection ? 1.0 : 1.5,
             };
           })
         );
@@ -130,9 +148,13 @@ export default function KnowledgeGraph({ graphData, sectionPageMap = {}, onNodeC
 
   if (!graphData) return null;
 
-  const nNodes  = Object.keys(graphData.nodes).length;
-  const nEdges  = graphData.edges.length;
-  const nProofs = Object.values(graphData.nodes).filter(n => n.node_type === 'proof').length;
+  const isEnglish = domain !== 'math';
+  const LEGEND    = isEnglish ? ENGLISH_LEGEND : MATH_LEGEND;
+  const nNodes    = Object.keys(graphData.nodes).length;
+  const nEdges    = graphData.edges.length;
+  const nSemantic = isEnglish
+    ? Object.values(graphData.nodes).filter(n => ['claim','concept','evidence','critic_view','primary_text'].includes(n.node_type)).length
+    : Object.values(graphData.nodes).filter(n => n.node_type === 'proof').length;
 
   // keep tooltip inside the 380px container
   const TIP_W = 260;
@@ -154,7 +176,7 @@ export default function KnowledgeGraph({ graphData, sectionPageMap = {}, onNodeC
       >
         <span>
           🕸️ Knowledge Graph &nbsp;
-          <span style={{ color: '#6B7280' }}>({nNodes} nodes · {nEdges} edges · {nProofs} proofs)</span>
+          <span style={{ color: '#6B7280' }}>({nNodes} nodes · {nEdges} edges · {nSemantic} {isEnglish ? 'semantic' : 'proofs'})</span>
         </span>
         <span style={{ color: '#6B7280' }}>{collapsed ? '▼' : '▲'}</span>
       </div>

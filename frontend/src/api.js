@@ -62,8 +62,18 @@ export async function getMyPapers() {
   return res.json(); // [{paper_id, title, uploaded_at, detected_domain}]
 }
 
-export async function openPaper(paperId) {
-  const res = await apiFetch(`${BASE}/paper/${encodeURIComponent(paperId)}/open`, { method: 'POST' });
+export async function openPaper(paperId, params = {}) {
+  const res = await apiFetch(`${BASE}/paper/${encodeURIComponent(paperId)}/open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model:                params.model || '',
+      api_key:              params.apiKey || null,
+      reader_expertise:     params.readerExpertise     ?? 0.0,
+      scientific_knowledge: params.scientificKnowledge ?? 0.0,
+      language_complexity:  params.languageComplexity  ?? 0.0,
+    }),
+  });
   if (!res.ok) throw new Error(await res.text());
   return res.json(); // {status, restored, detected_domain?}
 }

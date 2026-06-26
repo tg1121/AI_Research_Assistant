@@ -254,17 +254,56 @@ _SKIP_TITLES = {
     "list of figures", "list of tables", "index", "notation", "glossary"
 }
 
+# Dotted leader in TOC title: "1. Introduction ........ 4"
+_TOC_DOTS_RE   = re.compile(r'\.{3,}')
+# Numbered bib entry title with brackets: "[1] Smith..." or "[12]."
+_BIB_BRACKET_RE = re.compile(r'^\[\d{1,3}\][\.\)]?\s+\S')
+# Year-in-parentheses in title → likely APA citation: "Smith, J. (2020). Title..."
+_CITE_YEAR_RE  = re.compile(r'\(\d{4}[a-z]?\)')
+# Body line that is a numbered bib entry: "[1] ..." or "1) ..."
+_BIB_LINE_RE   = re.compile(r'^\s*(\[\d+\]|\d+[\.\)])\s+[A-Z\(]')
+# Body line that has a citation year: signals dense bib block
+_BIB_YEAR_RE   = re.compile(r'\(\d{4}[a-z]?\)')
+
+
 def _should_skip_section(title: str, body: str) -> bool:
     t = title.lower().strip()
     if t in _SKIP_TITLES:
         return True
+
+    # TOC entry: title contains dotted leaders ("Introduction ........ 4")
+    if _TOC_DOTS_RE.search(title):
+        return True
+
+    # Numbered bib entry as title: "[1] Smith, J. ..."
+    if _BIB_BRACKET_RE.match(title.strip()):
+        return True
+
+    # APA citation as title: "Smith, J. (2020). Title of paper..."
+    if _CITE_YEAR_RE.search(title):
+        return True
+
     if len(body.split()) < 15:
         return True
+
     lines = [l.strip() for l in body.splitlines() if l.strip()]
+
+    # Body that looks like a TOC: >50% of lines end with digits
     if len(lines) > 3:
         digit_end = sum(1 for l in lines if re.search(r'\d+\s*$', l))
         if digit_end / len(lines) > 0.5:
             return True
+
+    # Body that is a block of numbered bibliography entries
+    bib_lines = sum(1 for l in lines if _BIB_LINE_RE.match(l))
+    if len(lines) >= 3 and bib_lines / len(lines) > 0.5:
+        return True
+
+    # Body that is a dense APA bibliography block (many lines with years)
+    year_lines = sum(1 for l in lines if _BIB_YEAR_RE.search(l))
+    if len(lines) >= 4 and year_lines / len(lines) > 0.5:
+        return True
+
     return False
 
 def _page_at(original: str, offset: int) -> int:
@@ -343,7 +382,7 @@ def _split_sections_plain(text: str) -> list[Section]:
         if re.match(r'\n\d+\.[\d\.]*\s+[A-Z]', part):
             if current_text:
                 body = "\n".join(current_text).strip()
-                if body:
+                if body and not _should_skip_section(current_title, body):
                     sections.append(Section(section_id=f"s{section_idx}",
                                             title=current_title, raw_text=body,
                                             page=current_page))
@@ -357,7 +396,7 @@ def _split_sections_plain(text: str) -> list[Section]:
 
     if current_text:
         body = "\n".join(current_text).strip()
-        if body:
+        if body and not _should_skip_section(current_title, body):
             sections.append(Section(section_id=f"s{section_idx}",
                                     title=current_title, raw_text=body,
                                     page=current_page))

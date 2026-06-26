@@ -12,7 +12,7 @@ import json
 import os
 import re
 from ingestion.document import Document
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 
 OUTPUTS_DIR = "outputs"
 _IS_LOCAL   = os.environ.get("ADMIN_MODE", "").lower() == "true"
@@ -115,7 +115,7 @@ def save_cache(doc, reader_expertise, scientific_knowledge, language_complexity,
 
 # ── Graph cache (math papers only, keyed by paper_id alone) ──────────
 
-def save_graph(paper_id: str, graph: MathGraph) -> None:
+def save_graph(paper_id: str, graph: Graph) -> None:
     graph_json = graph.to_json()
     if _IS_LOCAL:
         os.makedirs(OUTPUTS_DIR, exist_ok=True)
@@ -135,14 +135,14 @@ def save_graph(paper_id: str, graph: MathGraph) -> None:
         print(f"  [graph save failed] {e}")
 
 
-def load_graph(paper_id: str) -> MathGraph | None:
+def load_graph(paper_id: str) -> Graph | None:
     if _IS_LOCAL:
         path = os.path.join(OUTPUTS_DIR, f"{paper_id}__graph.json")
         if not os.path.exists(path):
             return None
         print(f"  [local graph hit] {path}")
         with open(path, encoding="utf-8") as f:
-            return MathGraph.from_json(f.read())
+            return Graph.from_json(f.read())
     try:
         result = (
             _db().table("output_cache")
@@ -153,7 +153,7 @@ def load_graph(paper_id: str) -> MathGraph | None:
         )
         if result.data:
             print(f"  [supabase graph hit] {paper_id}__graph")
-            return MathGraph.from_json(result.data[0]["doc_json"])
+            return Graph.from_json(result.data[0]["doc_json"])
     except Exception as e:
         print(f"  [graph load failed] {e}")
     return None

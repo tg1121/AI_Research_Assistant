@@ -2,7 +2,7 @@
 Synthesizer — V8 (graph-driven, no section Q&A).
 
 Pipeline: parse → build graph → synthesize.
-Section data is derived entirely from the MathGraph and DocMap:
+Section data is derived entirely from the Graph and DocMap:
   - section title
   - all theorem/lemma/definition/corollary/proposition labels in that section
   - proof types present (direct/induction/contradiction) with counts
@@ -13,7 +13,7 @@ Section data is derived entirely from the MathGraph and DocMap:
 import json
 from prompts.synthesis_prompt import SYNTHESIS_SYSTEM, synthesis_prompt
 from ingestion.document import Document
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 from graph.doc_map import DocMap
 from pipeline.llm_client import llm_call, clean_json
 
@@ -22,12 +22,12 @@ MATH_TYPES = {"theorem", "lemma", "definition", "corollary", "proposition"}
 
 def _build_section_summaries(
     doc: Document,
-    graph: MathGraph,
+    graph: Graph,
     doc_map: DocMap,
 ) -> list[dict]:
     """
     Build a rich summary for each section purely from graph data.
-    No LLM calls — all fields come from already-extracted MathGraph nodes.
+    No LLM calls — all fields come from already-extracted Graph nodes.
     """
     summaries = []
     for section in doc.sections:
@@ -56,7 +56,7 @@ def _build_section_summaries(
     return summaries
 
 
-def _proof_summary(graph: MathGraph) -> str:
+def _proof_summary(graph: Graph) -> str:
     """Paper-level summary of proof methods for the math_chain block."""
     counts: dict[str, int] = {}
     for node in graph.nodes.values():
@@ -71,12 +71,12 @@ def _proof_summary(graph: MathGraph) -> str:
 
 def run_synthesis(
     doc: Document,
-    graph: MathGraph,
+    graph: Graph,
     doc_map: DocMap,
     reader_expertise: float = 0.0,
     scientific_knowledge: float = 0.0,
     language_complexity: float = 0.0,
-    model: str = "groq/llama-3.3-70b-versatile",
+    model: str = "openrouter/openai/gpt-oss-120b:free",
     api_key: str | None = None,
 ) -> Document:
     """

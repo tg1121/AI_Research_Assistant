@@ -14,7 +14,7 @@ Flow per turn:
 import json
 from pipeline.llm_client import llm_call, clean_json
 from agent.planner import plan_and_retrieve
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 from graph.doc_map import DocMap
 from memory.store import (
     save_paper_memory, save_user_memory, build_memory_context
@@ -97,23 +97,25 @@ def _compress_turns(turns, model, api_key) -> str:
         return " | ".join(t["content"][:80] for t in turns if t["role"] == "user")
 
 
-def _persist_signals(signals: dict, paper_id: str):
+def _persist_signals(signals: dict, paper_id: str, user_id: str | None):
+    if not user_id:
+        return
     try:
         for c in signals.get("corrections", []):
-            save_paper_memory(paper_id, "correction", c)
+            save_paper_memory(paper_id, user_id, "correction", c)
         for r in signals.get("self_revisions", []):
-            save_paper_memory(paper_id, "self_revision", r)
+            save_paper_memory(paper_id, user_id, "self_revision", r)
         for f in signals.get("established_facts", []):
-            save_paper_memory(paper_id, "established_fact", f)
+            save_paper_memory(paper_id, user_id, "established_fact", f)
         for e in signals.get("expertise_signals", []):
-            save_user_memory("expertise_signal", e)
+            save_user_memory(user_id, "expertise_signal", e)
         for s in signals.get("style_preferences", []):
-            save_user_memory("style_preference", s)
+            save_user_memory(user_id, "style_preference", s)
     except Exception:
         pass
 
 
-def _maybe_compress(messages, paper_id, turn_number, model, api_key):
+def _maybe_compress(messages, paper_id, user_id, turn_number, model, api_key):
     n_turns = len(messages) // 2
     if n_turns <= COMPRESS_EVERY:
         return
@@ -123,11 +125,12 @@ def _maybe_compress(messages, paper_id, turn_number, model, api_key):
     start         = turn_number - n_turns + 1
     end           = turn_number - KEEP_RECENT
     summary       = _compress_turns(compress_msgs, model, api_key)
-    try:
-        save_paper_memory(paper_id, "conversation_summary",
-                          summary, f"{start}-{end}")
-    except Exception:
-        pass
+    if user_id:
+        try:
+            save_paper_memory(paper_id, user_id, "conversation_summary",
+                              summary, f"{start}-{end}")
+        except Exception:
+            pass
     messages.clear()
     messages.extend(keep_msgs)
 
@@ -137,7 +140,7 @@ def _maybe_compress(messages, paper_id, turn_number, model, api_key):
 def chat_turn(
     user_message: str,
     messages: list[dict],
-    graphs: list[MathGraph],
+    graphs: list[Graph],
     doc_maps: list[DocMap],
     paper_titles: list[str],
     paper_ids: list[str],
@@ -145,6 +148,7 @@ def chat_turn(
     model: str,
     api_key: str | None,
     turn_counter: list[int],
+    user_id: str | None = None,
 ) -> str:
     """
     Process one user turn across one or more open papers.
@@ -180,7 +184,7 @@ def chat_turn(
 
     # 3. memory context
     try:
-        mem_parts = [build_memory_context(pid) for pid in paper_ids]
+        mem_parts = [build_memory_context(pid, user_id) for pid in paper_ids] if user_id else []
         memory_ctx = "\n\n".join(m for m in mem_parts if m)
     except Exception:
         memory_ctx = ""
@@ -202,10 +206,10 @@ def chat_turn(
 
     # 6. learning signals (best-effort)
     signals = _extract_signals(user_message, reply, model, api_key)
-    _persist_signals(signals, paper_ids[0] if paper_ids else "global")
+    _persist_signals(signals, paper_ids[0] if paper_ids else "global", user_id)
 
     # 7. sliding window compression
     _maybe_compress(messages, paper_ids[0] if paper_ids else "global",
-                    turn_counter[0], model, api_key)
+                    user_id, turn_counter[0], model, api_key)
 
     return reply

@@ -42,7 +42,7 @@ class MarkerDecisionRequest(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     reader_params: dict = {}
-    model: str = "groq/llama-3.3-70b-versatile"
+    model: str = "openrouter/openai/gpt-oss-120b:free"
     api_key: Optional[str] = None
     paper_ids: list[str] = []  # all open papers; enables multi-paper context
     prior_messages: list[dict] = []  # frontend-saved history; restores backend state after restart

@@ -1,5 +1,5 @@
 """
-Graph builder — builds MathGraph and DocMap.
+Graph builder — builds Graph and DocMap.
 
 Supports two domains:
   "math"     — regex-based (Theorem/Lemma/Definition/…) with full node/edge extraction
@@ -12,7 +12,7 @@ from ingestion.domain_detector import detect_domain
 from ingestion.node_extractor import extract_nodes as math_extract_nodes
 from ingestion.edge_extractor import extract_edges as math_extract_edges
 from graph.doc_map import build_doc_map
-from graph.math_graph import MathGraph
+from graph.math_graph import Graph
 from graph.doc_map import DocMap
 
 
@@ -21,9 +21,9 @@ def build_graph(
     domain: str = "auto",
     model: str | None = None,
     api_key: str | None = None,
-) -> tuple[MathGraph, DocMap, str]:
+) -> tuple[Graph, DocMap, str]:
     """
-    Build MathGraph and DocMap.
+    Build Graph and DocMap.
     Returns (graph, doc_map, resolved_domain).
     domain: "auto" | "math" | "english"
     """
