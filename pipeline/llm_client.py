@@ -380,30 +380,18 @@ def _check_ollama_model(model: str) -> None:
 
 
 def _llm_call_hf_space(messages: list, max_tokens: int) -> str:
-    """Call a Gradio space (Colab share URL or HF Space) via gradio_client.
-    Works with Gradio 4.x and 5.x — handles the queue protocol automatically.
-    """
+    """Call the Qwen OpenAI-compatible inference server on Cloud Run."""
+    import requests as _requests
     space_url = os.environ.get("HF_SPACE_URL", "").rstrip("/")
     if not space_url:
-        raise RuntimeError(
-            "HF_SPACE_URL env var is not set. "
-            "Run qwen_space/colab_qwen.ipynb in Colab and paste the share URL here."
-        )
-    try:
-        from gradio_client import Client
-    except ImportError:
-        raise RuntimeError(
-            "gradio-client is not installed. Run: pip install gradio-client"
-        )
-    client = Client(space_url, verbose=False)
-    result = client.predict(
-        json.dumps(messages),
-        max_tokens,
-        api_name="/predict",
+        raise RuntimeError("HF_SPACE_URL env var is not set.")
+    resp = _requests.post(
+        f"{space_url}/v1/chat/completions",
+        json={"model": "qwen", "messages": messages, "max_tokens": max_tokens},
+        timeout=600,
     )
-    if not isinstance(result, str):
-        raise ValueError(f"HF Space returned unexpected type: {type(result)}")
-    return result
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
 
 
 def llm_call(messages: list,

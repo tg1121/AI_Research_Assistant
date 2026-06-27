@@ -1,15 +1,20 @@
 """
-DeepSeek-R1-Distill-Qwen-7B inference server.
-Runs on GCP Cloud Run (L4 GPU).
-Model is baked into the Docker image — no download on cold start.
+Qwen 2.5 7B Instruct — OpenAI-compatible inference server.
+POST /v1/chat/completions — same interface as any OpenAI provider.
+Model is baked into the Docker image; lazy-loaded on first request.
 """
-import json
 import threading
+import time
+import uuid
+from typing import Any, Dict, List, Optional
+
 import torch
-import gradio as gr
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 _model = None
 _tokenizer = None
@@ -41,34 +46,72 @@ def _load():
         print("Model ready")
 
 
-def generate(messages_json: str, max_tokens: int = 6000) -> str:
+app = FastAPI(title="Qwen 2.5 7B — Research Pipeline")
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str = MODEL_ID
+    messages: List[ChatMessage]
+    max_tokens: Optional[int] = 6000
+    temperature: Optional[float] = 0.0
+    tools: Optional[List[Dict[str, Any]]] = None
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "model_loaded": _model is not None}
+
+
+@app.post("/v1/chat/completions")
+def chat_completions(req: ChatCompletionRequest):
     _load()
-    messages = json.loads(messages_json)
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    kwargs = {}
+    if req.tools:
+        kwargs["tools"] = req.tools
+
     text = _tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        messages, tokenize=False, add_generation_prompt=True, **kwargs
     )
     inputs = _tokenizer([text], return_tensors="pt").to(_model.device)
+
     with torch.no_grad():
         output = _model.generate(
             **inputs,
-            max_new_tokens=int(max_tokens),
-            do_sample=False,
+            max_new_tokens=int(req.max_tokens),
+            do_sample=req.temperature > 0,
+            temperature=req.temperature if req.temperature > 0 else None,
             pad_token_id=_tokenizer.eos_token_id,
         )
+
     new_tokens = output[0][inputs.input_ids.shape[1]:]
-    return _tokenizer.decode(new_tokens, skip_special_tokens=True)
+    content = _tokenizer.decode(new_tokens, skip_special_tokens=True)
 
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": MODEL_ID,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": inputs.input_ids.shape[1],
+            "completion_tokens": len(new_tokens),
+            "total_tokens": inputs.input_ids.shape[1] + len(new_tokens),
+        },
+    }
 
-demo = gr.Interface(
-    fn=generate,
-    inputs=[
-        gr.Textbox(label="messages_json"),
-        gr.Number(label="max_tokens", value=6000, precision=0),
-    ],
-    outputs=gr.Textbox(label="response"),
-    title="DeepSeek-R1-Distill-Qwen-7B — Research Pipeline",
-    description="LLM inference endpoint. Set HF_SPACE_URL to this service URL.",
-)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+    uvicorn.run(app, host="0.0.0.0", port=7860)
