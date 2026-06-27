@@ -1,0 +1,21 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args:
+    - 'build'
+    - '--build-arg'
+    - 'HF_TOKEN=${_HF_TOKEN}'
+    - '-t'
+    - 'us-central1-docker.pkg.dev/endless-memento-499616-u9/qwen-serving/qwen:latest'
+    - '.'
+  timeout: 7200s
+
+images:
+- 'us-central1-docker.pkg.dev/endless-memento-499616-u9/qwen-serving/qwen:latest'
+
+timeout: 7200s
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+
+substitutions:
+  _HF_TOKEN: ''

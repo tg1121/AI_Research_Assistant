@@ -1,11 +1,7 @@
 """
-Qwen 2.5 14B inference server.
-Runs on GCP Cloud Run (L4 GPU) or locally.
-API: POST /api/predict  {"data": ["<messages_json>", max_tokens]}
-     -> {"data": ["<response_text>"]}
-
-Model loads lazily on first request so the container passes the
-Cloud Run startup probe before the ~10 min download completes.
+DeepSeek-R1-Distill-Qwen-7B inference server.
+Runs on GCP Cloud Run (L4 GPU).
+Model is baked into the Docker image — no download on cold start.
 """
 import json
 import threading
@@ -13,7 +9,7 @@ import torch
 import gradio as gr
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
-MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
+MODEL_ID = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 
 _model = None
 _tokenizer = None
@@ -70,7 +66,7 @@ demo = gr.Interface(
         gr.Number(label="max_tokens", value=6000, precision=0),
     ],
     outputs=gr.Textbox(label="response"),
-    title="Qwen 2.5 14B — Research Pipeline",
+    title="DeepSeek-R1-Distill-Qwen-7B — Research Pipeline",
     description="LLM inference endpoint. Set HF_SPACE_URL to this service URL.",
 )
 
